@@ -30,6 +30,7 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fonts/McDonald_s_Fries_Font.ttf</string>
+		<string>Fonts/LXGWWenKai-Light.ttf</string>
 	</array>
 
 	<!-- 启动画面 -->

@@ -23,20 +23,6 @@ class WebViewManager: ObservableObject {
     }
 }
 
-final class VideoProcessingState: @unchecked Sendable {
-    let videoWriterInput: AVAssetWriterInput
-    let reader: AVAssetReader
-    let readerOutput: AVAssetReaderTrackOutput
-    let writer: AVAssetWriter
-    
-    init(videoWriterInput: AVAssetWriterInput, reader: AVAssetReader, readerOutput: AVAssetReaderTrackOutput, writer: AVAssetWriter) {
-        self.videoWriterInput = videoWriterInput
-        self.reader = reader
-        self.readerOutput = readerOutput
-        self.writer = writer
-    }
-}
-
 class MediaSaver: NSObject {
     static let shared = MediaSaver()
     
@@ -183,8 +169,10 @@ class MediaSaver: NSObject {
             return
         }
         
-        let makerApple = ["17": assetIdentifier] as [String: Any]
-        let metadata = [kCGImagePropertyMakerAppleDictionary as String: makerApple] as [String: Any]
+        // Apple's LivePhoto MakerNote format
+        // The correct format is: { kCGImagePropertyMakerAppleDictionary: { "17": assetIdentifier } }
+        let makerAppleDictionary: [String: Any] = ["17": assetIdentifier]
+        let metadata: [String: Any] = [kCGImagePropertyMakerAppleDictionary as String: makerAppleDictionary]
         
         CGImageDestinationAddImage(imageDestination, cgImage, metadata as CFDictionary)
         if !CGImageDestinationFinalize(imageDestination) {
@@ -195,11 +183,12 @@ class MediaSaver: NSObject {
             return
         }
         print("[LivePhoto] ✅ Key photo with MakerNote saved to: \(tempImageURL.lastPathComponent)")
+        print("[LivePhoto] 📋 AssetIdentifier used: \(assetIdentifier)")
         
-        // 3. Inject Metadata to Video
+        // 3. Inject Metadata to Video using AVAssetExportSession
         let outputVideoURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
-        print("[LivePhoto] 🔄 Injecting metadata to video...")
-        LivePhotoVideoWriter.addMetadata(to: tempVideoURL, outputURL: outputVideoURL, assetIdentifier: assetIdentifier) { error in
+        print("[LivePhoto] 🔄 Injecting metadata to video using AVAssetExportSession...")
+        LivePhotoVideoWriter.addMetadataViaExportSession(to: tempVideoURL, outputURL: outputVideoURL, assetIdentifier: assetIdentifier) { error in
             if let error = error {
                 print("[LivePhoto] ❌ Metadata injection failed: \(error)")
                 DispatchQueue.main.async {
@@ -210,6 +199,26 @@ class MediaSaver: NSObject {
             print("[LivePhoto] ✅ Metadata injected successfully")
             
             // 4. Save to Photos
+
+            // Verify video metadata before saving
+            Task {
+                let verifyAsset = AVURLAsset(url: outputVideoURL)
+                let metadata = try? await verifyAsset.load(.metadata)
+                print("[LivePhoto] 🔍 Video metadata items: \(metadata?.count ?? 0)")
+                for item in metadata ?? [] {
+                    let valueString: String
+                    if let stringValue = item.value as? String {
+                        valueString = stringValue
+                    } else if let value = item.value {
+                        valueString = String(describing: value)
+                    } else {
+                        valueString = "nil"
+                    }
+                    let identifierRaw = (item.identifier?.rawValue as? String) ?? "unknown"
+                    print("[LivePhoto] 🔍 Metadata: \(identifierRaw) = \(valueString)")
+                }
+            }
+
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
                 guard status == .authorized || status == .limited else {
                     DispatchQueue.main.async {
@@ -217,11 +226,20 @@ class MediaSaver: NSObject {
                     }
                     return
                 }
-                
+
                 PHPhotoLibrary.shared().performChanges({
                     let request = PHAssetCreationRequest.forAsset()
-                    request.addResource(with: .photo, fileURL: tempImageURL, options: nil)
-                    request.addResource(with: .pairedVideo, fileURL: outputVideoURL, options: nil)
+
+                    // Photo options - set asset identifier in the filename
+                    let photoOptions = PHAssetResourceCreationOptions()
+                    photoOptions.originalFilename = "\(assetIdentifier)_IMG.jpg"
+
+                    // Video options - set asset identifier in the filename
+                    let videoOptions = PHAssetResourceCreationOptions()
+                    videoOptions.originalFilename = "\(assetIdentifier)_VID.mov"
+
+                    request.addResource(with: .photo, fileURL: tempImageURL, options: photoOptions)
+                    request.addResource(with: .pairedVideo, fileURL: outputVideoURL, options: videoOptions)
                 }) { success, error in
                     print("[LivePhoto] \(success ? "✅" : "❌") PHPhotoLibrary save result: success=\(success), error=\(error?.localizedDescription ?? "none")")
                     DispatchQueue.main.async {
@@ -234,89 +252,76 @@ class MediaSaver: NSObject {
 }
 
 struct LivePhotoVideoWriter {
-    static func addMetadata(to videoURL: URL, outputURL: URL, assetIdentifier: String, completion: @escaping (Error?) -> Void) {
+    // Use AVAssetExportSession for reliable metadata injection
+    static func addMetadataViaExportSession(to videoURL: URL, outputURL: URL, assetIdentifier: String, completion: @escaping (Error?) -> Void) {
         let asset = AVURLAsset(url: videoURL)
-        
+
         Task {
-            guard let assetTrack = try? await asset.loadTracks(withMediaType: .video).first else {
-                completion(NSError(domain: "MediaSaver", code: 4, userInfo: [NSLocalizedDescriptionKey: "No video track"]))
-                return
-            }
-            
             do {
-                let preferredTransform = try await assetTrack.load(.preferredTransform)
-                let duration = try await asset.load(.duration)
-                let timeRange = CMTimeRangeMake(start: .zero, duration: duration)
-                
-                let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-                
-                // Using passthrough output settings
-                let videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil)
-                videoWriterInput.expectsMediaDataInRealTime = false
-                videoWriterInput.transform = preferredTransform
-                writer.add(videoWriterInput)
-                
-                let metadataSpec: [String: Any] = [
-                    kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier as String: AVMetadataIdentifier.quickTimeMetadataContentIdentifier.rawValue,
-                    kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType as String: kCMMetadataBaseDataType_UTF8 as String
-                ]
-                var formatDesc: CMFormatDescription?
-                CMMetadataFormatDescriptionCreateWithMetadataSpecifications(
-                    allocator: kCFAllocatorDefault,
-                    metadataType: kCMMetadataFormatType_Boxed,
-                    metadataSpecifications: [metadataSpec] as CFArray,
-                    formatDescriptionOut: &formatDesc
-                )
-                guard let formatDesc else {
-                    completion(NSError(domain: "MediaSaver", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to create metadata format"]))
-                    return
-                }
-                
-                let metadataInput = AVAssetWriterInput(mediaType: .metadata, outputSettings: nil, sourceFormatHint: formatDesc)
-                let metadataAdaptor = AVAssetWriterInputMetadataAdaptor(assetWriterInput: metadataInput)
-                writer.add(metadataAdaptor.assetWriterInput)
-                
-                let reader = try AVAssetReader(asset: asset)
-                // Passthrough reader output
-                let readerOutput = AVAssetReaderTrackOutput(track: assetTrack, outputSettings: nil)
-                reader.add(readerOutput)
-                
-                guard writer.startWriting() else {
-                    completion(writer.error ?? NSError(domain: "MediaSaver", code: 6, userInfo: [NSLocalizedDescriptionKey: "Writer failed to start"]))
-                    return
-                }
-                writer.startSession(atSourceTime: .zero)
-                
-                guard reader.startReading() else {
-                    completion(reader.error ?? NSError(domain: "MediaSaver", code: 7, userInfo: [NSLocalizedDescriptionKey: "Reader failed to start"]))
-                    return
-                }
-                
+                // Create metadata item
                 let metadataItem = AVMutableMetadataItem()
                 metadataItem.identifier = .quickTimeMetadataContentIdentifier
                 metadataItem.value = assetIdentifier as NSString
                 metadataItem.dataType = kCMMetadataBaseDataType_UTF8 as String
-                
-                let metadataGroup = AVTimedMetadataGroup(items: [metadataItem], timeRange: timeRange)
-                metadataAdaptor.append(metadataGroup)
-                
-                let state = VideoProcessingState(videoWriterInput: videoWriterInput, reader: reader, readerOutput: readerOutput, writer: writer)
-                
-                state.videoWriterInput.requestMediaDataWhenReady(on: DispatchQueue(label: "videoWriterQueue")) { [state] in
-                    while state.videoWriterInput.isReadyForMoreMediaData {
-                        if state.reader.status == .reading, let sampleBuffer = state.readerOutput.copyNextSampleBuffer() {
-                            state.videoWriterInput.append(sampleBuffer)
-                        } else {
-                            state.videoWriterInput.markAsFinished()
-                            state.writer.finishWriting {
-                                completion(state.writer.error)
-                            }
-                            break
-                        }
+
+                let identifierString = metadataItem.identifier?.rawValue as? String ?? "nil"
+                let valueString = metadataItem.value as? String ?? assetIdentifier
+                print("[LivePhoto] 📋 Writing metadata to video - Identifier: \(identifierString), Value: \(valueString)")
+
+                // Create export session with metadata
+                guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+                    print("[LivePhoto] ❌ Failed to create AVAssetExportSession")
+                    DispatchQueue.main.async {
+                        completion(NSError(domain: "MediaSaver", code: 11, userInfo: [NSLocalizedDescriptionKey: "Failed to create export session"]))
                     }
+                    return
+                }
+
+                // Set metadata
+                exportSession.metadata = [metadataItem]
+
+                exportSession.outputURL = outputURL
+                exportSession.outputFileType = .mov
+
+                print("[LivePhoto] 🔄 Starting export with metadata...")
+                await exportSession.export()
+
+                guard exportSession.status == .completed else {
+                    let exportError = exportSession.error
+                    print("[LivePhoto] ❌ Export failed: \(exportError?.localizedDescription ?? "unknown")")
+                    DispatchQueue.main.async {
+                        completion(exportError ?? NSError(domain: "MediaSaver", code: 12, userInfo: [NSLocalizedDescriptionKey: "Export failed"]))
+                    }
+                    return
+                }
+
+                print("[LivePhoto] ✅ Export with metadata successful")
+
+                // Verify metadata was written
+                let verifyAsset = AVURLAsset(url: outputURL)
+                let metadata = try? await verifyAsset.load(.metadata)
+                print("[LivePhoto] 🔍 Video metadata items: \(metadata?.count ?? 0)")
+                for item in metadata ?? [] {
+                    let valueString: String
+                    if let stringValue = item.value as? String {
+                        valueString = stringValue
+                    } else if let value = item.value {
+                        valueString = String(describing: value)
+                    } else {
+                        valueString = "nil"
+                    }
+                    let identifier = (item.identifier?.rawValue as? String) ?? "unknown"
+                    print("[LivePhoto] 🔍 Metadata: \(identifier) = \(valueString)")
+                }
+
+                DispatchQueue.main.async {
+                    completion(nil)
                 }
             } catch {
-                completion(error)
+                print("[LivePhoto] ❌ Error during metadata export: \(error)")
+                DispatchQueue.main.async {
+                    completion(error)
+                }
             }
         }
     }

@@ -112,3 +112,6 @@ iOSInjectionProject/
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Info.plist (placed in blossome/ subdirectory by build system)
+Info.plist

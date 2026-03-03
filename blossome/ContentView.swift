@@ -163,6 +163,7 @@ struct ContentView: View {
 /// App 内置的字体列表
 let bundledFonts: [(displayName: String, postScriptName: String)] = [
     ("McDonald's Fries Font", "McDonald'sFriesFont-Regular"),
+    ("LXGW WenKai Light", "LXGWWenKai-Light"),
 ]
 
 struct BundledFontPicker: View {
