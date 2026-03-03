@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "blossome_icon.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -12,6 +13,7 @@
           "value" : "dark"
         }
       ],
+      "filename" : "blossome_icon_dark.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -23,6 +25,7 @@
           "value" : "tinted"
         }
       ],
+      "filename" : "blossome_icon.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"

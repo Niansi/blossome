@@ -9,9 +9,12 @@ import SwiftUI
 
 @main
 struct blossomeApp: App {
+    @StateObject private var portfolioStore = PortfolioStore.shared
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(portfolioStore)
         }
     }
 }

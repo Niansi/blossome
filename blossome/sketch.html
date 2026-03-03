@@ -7,6 +7,16 @@
     <title>The Birth of Music</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <style>
+        @font-face {
+            font-family: "McDonaldsFriesFont";
+            src: url('McDonald_s_Fries_Font.ttf') format('truetype');
+        }
+
+        @font-face {
+            font-family: 'LXGWWenKai-Light';
+            src: url('LXGWWenKai-Light.ttf') format('truetype');
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -31,6 +41,8 @@
 
         let isP5Ready = false;
         let pendingText = null;
+        let pendingFont = null;
+        let fontReady = false;
 
         // 辅助函数：生成复合正弦波以更平滑
         function compositeWave(y, timeOffset) {
@@ -100,12 +112,17 @@
         function setup() {
             createCanvas(windowWidth, windowHeight);
             frameRate(60);
-            textFont(customFont);
             noStroke();
             isP5Ready = true;
-            // 如果 Swift 已经发来了真正的文本，就用它，否则留空等待
+            // Notify Swift that P5.js is ready
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.p5Ready) {
+                window.webkit.messageHandlers.p5Ready.postMessage('ready');
+            }
+            // 如果 Swift 已经发来了文本和字体，启动字体加载流程
             if (pendingText !== null) {
-                initLines(pendingText);
+                startArt(pendingText, pendingFont);
+                pendingText = null;
+                pendingFont = null;
             }
         }
 
@@ -113,6 +130,7 @@
             // 暖白色背景
             background(253, 252, 250);
 
+            // 字体未就绪时不绘制文字粒子，只画背景曲线
             // 绘制复合曲线背景
             stroke(200, 80);
             strokeWeight(1);
@@ -126,6 +144,8 @@
             }
             endShape();
             noStroke();
+
+            if (!fontReady) return;
 
             for (let ml of musicalLines) {
                 ml.update();
@@ -156,14 +176,23 @@
 
         // SwiftUI 调用的接口
         function startArt(text, font) {
-            if (font) {
-                customFont = font;
-                try { textFont(customFont); } catch (e) { }
-            }
-            if (isP5Ready) {
-                initLines(text);
-            } else {
+            if (!isP5Ready) {
                 pendingText = text;
+                pendingFont = font;
+                return;
+            }
+
+            if (font && font !== 'System') {
+                customFont = font;
+                // 触发字体加载，等待加载完成后再应用和渲染
+                document.fonts.load('16px "' + font + '"').then(function () {
+                    try { textFont(customFont); } catch (e) { }
+                    fontReady = true;
+                    initLines(text);
+                });
+            } else {
+                fontReady = true;
+                initLines(text);
             }
         }
 

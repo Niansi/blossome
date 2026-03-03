@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>麦门</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        @font-face {
+            font-family: "McDonaldsFriesFont";
+            src: url('McDonald_s_Fries_Font.ttf') format('truetype');
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #D4B587;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        // --- Colors ---
+        const BOX_CORAL = '#EE806C';
+        const BOX_DARK = '#D4604A';
+        const FRIES_GOLD = '#FDD466';
+        const GOLD_COLORS = ['#FDD466', '#FFC72C', '#FFD54F', '#FFCA28'];
+
+        // --- Timing (frames at 60fps) ---
+        const SHAKE_DURATION = 50;
+        const FLY_DURATION = 40;
+        const SETTLE_DURATION = 50;
+        const DISPLAY_DURATION = 120;
+        const FALL_DURATION = 50;
+        const MAX_WORDS = 5;
+
+        // --- State ---
+        let state = 'IDLE';
+        let stateTimer = 0;
+        let wordParticles = [];
+        let wordGroups = [];
+        let currentGroupIndex = 0;
+        let cssFontName = "McDonaldsFriesFont";
+
+        let isP5Ready = false;
+        let pendingText = null;
+        let pendingFont = null;
+        let fontReady = false;
+        let textInitialized = false;
+
+        // Box
+        let boxW, boxH, boxX, boxY;
+        let shakeIntensity = 0;
+
+        // Decorative fries
+        let decoFries = [];
+        let goldRGBs = [];
+
+        // ============================
+        // Word Particle — one per word
+        // ============================
+        class WordParticle {
+            constructor(word, targetX, targetY, delay) {
+                this.word = word;
+                this.targetX = targetX;
+                this.targetY = targetY;
+                this.delay = delay; // staggered launch delay in frames
+                this.fontSize = 42;
+                this.colorIdx = Math.floor(Math.random() * GOLD_COLORS.length);
+
+                // Start hidden inside box
+                this.x = boxX + (Math.random() - 0.5) * boxW * 0.3;
+                this.y = boxY - boxH * 0.3;
+                this.angle = (Math.random() - 0.5) * 0.6;
+                this.alpha = 0;
+                this.scale = 0.5;
+
+                // Physics for flying phase
+                this.vx = 0;
+                this.vy = 0;
+                this.launched = false;
+                this.settled = false;
+            }
+
+            launch() {
+                this.launched = true;
+                this.alpha = 255;
+                // Arc upward from box toward general target direction
+                let dx = this.targetX - this.x;
+                this.vx = dx * 0.03 + (Math.random() - 0.5) * 3;
+                this.vy = -10 - Math.random() * 5;
+                this.angle = (Math.random() - 0.5) * 0.8;
+                this.scale = 0.6 + Math.random() * 0.3;
+            }
+
+            updateFlying() {
+                if (!this.launched) return;
+                this.vy += 0.25; // gravity
+                this.x += this.vx;
+                this.y += this.vy;
+                this.angle *= 0.97;
+                this.vx *= 0.98;
+            }
+
+            updateSettling() {
+                if (!this.launched) return;
+                // Ease toward target
+                this.x += (this.targetX - this.x) * 0.12;
+                this.y += (this.targetY - this.y) * 0.12;
+                this.angle += (0 - this.angle) * 0.15;
+                this.scale += (1.0 - this.scale) * 0.1;
+                this.vx = 0;
+                this.vy = 0;
+
+                let dx = this.targetX - this.x;
+                let dy = this.targetY - this.y;
+                if (dx * dx + dy * dy < 2) {
+                    this.x = this.targetX;
+                    this.y = this.targetY;
+                    this.settled = true;
+                }
+            }
+
+            updateDisplay() {
+                // Tiny vibration
+                this.x = this.targetX + (Math.random() - 0.5) * 0.4;
+                this.y = this.targetY + (Math.random() - 0.5) * 0.4;
+                this.angle = 0;
+                this.scale = 1.0;
+            }
+
+            updateFalling(timer) {
+                if (timer < 5) {
+                    // Initial burst
+                    this.vx = (Math.random() - 0.5) * 4;
+                    this.vy = -3 - Math.random() * 3;
+                }
+                this.vy += 0.5;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.angle += this.vx * 0.01;
+                this.alpha = Math.max(0, this.alpha - 6);
+            }
+
+            draw() {
+                if (this.alpha <= 0 || !this.launched) return;
+                let rgb = goldRGBs[this.colorIdx];
+                push();
+                translate(this.x, this.y);
+                rotate(this.angle);
+                scale(this.scale);
+                noStroke();
+                fill(rgb[0], rgb[1], rgb[2], this.alpha);
+                textAlign(CENTER, CENTER);
+                textFont(cssFontName);
+                textSize(this.fontSize);
+                text(this.word, 0, 0);
+                pop();
+            }
+        }
+
+        // ==============
+        // Decorative Fry
+        // ==============
+        class DecoFry {
+            constructor() {
+                this.offsetX = (Math.random() - 0.5) * 0.5;
+                this.baseAngle = (Math.random() - 0.5) * 0.35;
+                this.h = 0.15 + Math.random() * 0.15;
+                this.w = 0.04 + Math.random() * 0.02;
+                this.colorIdx = Math.floor(Math.random() * GOLD_COLORS.length);
+                this.phase = Math.random() * Math.PI * 2;
+            }
+        }
+
+        // ============
+        // Box Drawing
+        // ============
+        // Top edge: flat on left/right 25%, smile curve in center 50%
+        function topEdgeCurveY(t, curve) {
+            if (t < 0.25 || t > 0.75) return 0;
+            let remapped = (t - 0.25) / 0.5;
+            return curve * sin(remapped * PI);
+        }
+
+        function drawFriesBox() {
+            push();
+            translate(boxX, boxY);
+
+            // Shake
+            let sa = sin(frameCount * 0.4) * 0.02 * shakeIntensity;
+            let sx = sin(frameCount * 0.6) * 2 * shakeIntensity;
+            let sy = cos(frameCount * 0.5) * 1 * shakeIntensity;
+            translate(sx, sy);
+            rotate(sa);
+
+            let bw = boxW;
+            let bh = boxH;
+            let botW = bw * 0.72;
+            let topY = -bh * 0.5;
+            let botY = bh * 0.22;
+
+            // --- Fries peeking out ---
+            for (let df of decoFries) {
+                push();
+                let fx = df.offsetX * bw;
+                let wobble = sin(frameCount * 0.07 + df.phase) * 0.015 * (1 + shakeIntensity);
+                translate(fx, topY);
+                rotate(df.baseAngle + wobble);
+                noStroke();
+                let rgb = goldRGBs[df.colorIdx];
+                fill(rgb[0], rgb[1], rgb[2]);
+                let fw = df.w * bw;
+                let fh = df.h * bh;
+                rectMode(CORNER);
+                rect(-fw / 2, -fh, fw, fh, fw * 0.35);
+                // Lighter tip
+                fill(255, 255, 210, 140);
+                rect(-fw / 2, -fh, fw, fh * 0.22, fw * 0.35);
+                pop();
+            }
+
+            noStroke();
+
+            // --- Box body with curved top (smile) and bottom (frown) ---
+            fill(BOX_CORAL);
+            beginShape();
+            // Bottom edge: frown (sad face) — curves upward in center
+            let botCurve = bh * 0.08;
+            let steps = 20;
+            for (let i = 0; i <= steps; i++) {
+                let t = i / steps;
+                let x = lerp(-botW / 2, botW / 2, t);
+                // Parabola curving upward (frown shape)
+                let curveY = botY - botCurve * sin(t * PI);
+                vertex(x, curveY);
+            }
+            // Right side up to top
+            vertex(bw / 2, topY);
+            // Top edge: smile (happy face) — flat sides, curves downward in center
+            let topCurve = bh * 0.06;
+            for (let i = steps; i >= 0; i--) {
+                let t = i / steps;
+                let x = lerp(-bw / 2, bw / 2, t);
+                let curveY = topY + topEdgeCurveY(t, topCurve);
+                vertex(x, curveY);
+            }
+            endShape(CLOSE);
+
+            // Left shadow with matching curves
+            fill(BOX_DARK);
+            beginShape();
+            // Bottom-left portion of frown curve
+            for (let i = 0; i <= steps; i++) {
+                let t = i / steps;
+                if (t > 0.38) break;
+                let x = lerp(-botW / 2, botW / 2, t);
+                let curveY = botY - botCurve * sin(t * PI);
+                vertex(x, curveY);
+            }
+            // Straight line up
+            vertex(-bw * 0.33, topY + topEdgeCurveY(0.38, topCurve));
+            // Top-left portion of smile curve (reversed)
+            for (let i = steps; i >= 0; i--) {
+                let t = i / steps;
+                if (t > 0.38) continue;
+                let x = lerp(-bw / 2, bw / 2, t);
+                let curveY = topY + topEdgeCurveY(t, topCurve);
+                vertex(x, curveY);
+            }
+            endShape(CLOSE);
+
+            // Top opening band following smile curve
+            fill(FRIES_GOLD);
+            let bandW = bw * 1.05;
+            let bandH = bh * 0.07;
+            beginShape();
+            for (let i = 0; i <= steps; i++) {
+                let t = i / steps;
+                let x = lerp(-bandW / 2, bandW / 2, t);
+                let curveY = topY - bandH / 2 + topEdgeCurveY(t, topCurve) * 0.5;
+                vertex(x, curveY);
+            }
+            for (let i = steps; i >= 0; i--) {
+                let t = i / steps;
+                let x = lerp(-bw / 2, bw / 2, t);
+                let curveY = topY + bandH / 2 + topEdgeCurveY(t, topCurve);
+                vertex(x, curveY);
+            }
+            endShape(CLOSE);
+
+            // Bottom rim following frown curve
+            fill('#C0483A');
+            let rimH = bh * 0.055;
+            beginShape();
+            for (let i = 0; i <= steps; i++) {
+                let t = i / steps;
+                let x = lerp(-botW / 2, botW / 2, t);
+                let curveY = botY - botCurve * sin(t * PI);
+                vertex(x, curveY);
+            }
+            for (let i = steps; i >= 0; i--) {
+                let t = i / steps;
+                let x = lerp(-botW * 0.45, botW * 0.45, t);
+                let curveY = botY + rimH - botCurve * 0.5 * sin(t * PI);
+                vertex(x, curveY);
+            }
+            endShape(CLOSE);
+
+            // M arches
+            drawGoldenArches(0, -bh * 0.04, bw * 0.36, bh * 0.30);
+
+            pop();
+        }
+
+        function drawGoldenArches(cx, cy, w, h) {
+            push();
+            translate(cx, cy);
+            noFill();
+            stroke(FRIES_GOLD);
+            strokeWeight(w * 0.09);
+            strokeCap(ROUND);
+
+            beginShape();
+            vertex(-w * 0.44, h * 0.35);
+            bezierVertex(-w * 0.44, -h * 0.5, -w * 0.11, -h * 0.5, -w * 0.04, h * 0.12);
+            endShape();
+
+            beginShape();
+            vertex(w * 0.44, h * 0.35);
+            bezierVertex(w * 0.44, -h * 0.5, w * 0.11, -h * 0.5, w * 0.04, h * 0.12);
+            endShape();
+
+            noStroke();
+            pop();
+        }
+
+        // ==================
+        // Word Group Layout
+        // ==================
+        function splitIntoGroups(text) {
+            let words = text.split(/[\s\n]+/).filter(w => w.trim().length > 0);
+            if (words.length === 0) words = ['麦门'];
+            let groups = [];
+            for (let i = 0; i < words.length; i += MAX_WORDS) {
+                groups.push(words.slice(i, i + MAX_WORDS));
+            }
+            return groups;
+        }
+
+        // Compute target positions for a group of words (centered layout)
+        function computeTargetPositions(words) {
+            let positions = [];
+            let n = words.length;
+            // Stack words vertically, centered
+            let lineH = 65;
+            let totalH = n * lineH;
+            let startY = height * 0.30 - totalH / 2 + lineH / 2;
+
+            for (let i = 0; i < n; i++) {
+                positions.push({
+                    x: width / 2,
+                    y: startY + i * lineH
+                });
+            }
+            return positions;
+        }
+
+        // ==============
+        // State Machine
+        // ==============
+        function transitionTo(newState) {
+            state = newState;
+            stateTimer = 0;
+        }
+
+        function handleState() {
+            stateTimer++;
+
+            switch (state) {
+                case 'SHAKING':
+                    // Intensify shake
+                    shakeIntensity = Math.min(stateTimer / 15, 2.5);
+                    if (stateTimer >= SHAKE_DURATION) {
+                        // Create word particles and launch them
+                        let words = wordGroups[currentGroupIndex];
+                        let targets = computeTargetPositions(words);
+                        wordParticles = [];
+                        for (let i = 0; i < words.length; i++) {
+                            wordParticles.push(new WordParticle(
+                                words[i], targets[i].x, targets[i].y, i * 6
+                            ));
+                        }
+                        transitionTo('FLYING');
+                    }
+                    break;
+
+                case 'FLYING':
+                    shakeIntensity = Math.max(0, 2.5 - stateTimer * 0.08);
+                    // Stagger launches
+                    for (let wp of wordParticles) {
+                        if (!wp.launched && stateTimer >= wp.delay) {
+                            wp.launch();
+                        }
+                        wp.updateFlying();
+                    }
+                    if (stateTimer >= FLY_DURATION) {
+                        transitionTo('SETTLING');
+                    }
+                    break;
+
+                case 'SETTLING':
+                    shakeIntensity = 0;
+                    let allSettled = true;
+                    for (let wp of wordParticles) {
+                        wp.updateSettling();
+                        if (!wp.settled) allSettled = false;
+                    }
+                    if (allSettled || stateTimer >= SETTLE_DURATION) {
+                        transitionTo('DISPLAY');
+                    }
+                    break;
+
+                case 'DISPLAY':
+                    shakeIntensity = 0;
+                    for (let wp of wordParticles) {
+                        wp.updateDisplay();
+                    }
+                    if (stateTimer >= DISPLAY_DURATION) {
+                        transitionTo('FALLING');
+                    }
+                    break;
+
+                case 'FALLING':
+                    for (let wp of wordParticles) {
+                        wp.updateFalling(stateTimer);
+                    }
+                    if (stateTimer >= FALL_DURATION) {
+                        // Next group
+                        currentGroupIndex = (currentGroupIndex + 1) % wordGroups.length;
+                        wordParticles = [];
+                        transitionTo('SHAKING');
+                    }
+                    break;
+            }
+        }
+
+        // ======
+        // P5.js
+        // ======
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            frameRate(60);
+            noStroke();
+
+            boxW = width * 0.30;
+            boxH = height * 0.18;
+            boxX = width / 2;
+            boxY = height * 0.82;
+
+            for (let c of GOLD_COLORS) {
+                let col = color(c);
+                goldRGBs.push([red(col), green(col), blue(col)]);
+            }
+
+            for (let i = 0; i < 8; i++) {
+                decoFries.push(new DecoFry());
+            }
+
+            isP5Ready = true;
+
+            // Notify Swift that P5.js is ready
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.p5Ready) {
+                window.webkit.messageHandlers.p5Ready.postMessage('ready');
+            }
+
+            // Load font via CSS @font-face + document.fonts API
+            // Same approach as sketch.html which works reliably in WKWebView
+            document.fonts.load('28px "' + cssFontName + '"').then(function () {
+                fontReady = true;
+                try { textFont(cssFontName); } catch (e) { }
+                if (pendingText !== null) {
+                    doStartArt(pendingText);
+                    pendingText = null;
+                }
+            }).catch(function (err) {
+                console.error('CSS font load failed:', err);
+                fontReady = true;
+                if (pendingText !== null) {
+                    doStartArt(pendingText);
+                    pendingText = null;
+                }
+            });
+        }
+
+        function draw() {
+            background(196, 162, 101);
+
+            // Draw word particles behind box
+            for (let wp of wordParticles) {
+                wp.draw();
+            }
+
+            drawFriesBox();
+
+            if (state !== 'IDLE') {
+                handleState();
+            }
+        }
+
+        function doStartArt(text) {
+            wordGroups = splitIntoGroups(text);
+            currentGroupIndex = 0;
+            wordParticles = [];
+            textInitialized = true;
+            shakeIntensity = 0;
+            transitionTo('SHAKING');
+        }
+
+        // --- Swift API ---
+        function startArt(text, font) {
+            if (!isP5Ready) {
+                pendingText = text;
+                pendingFont = font;
+                return;
+            }
+
+            if (font && font !== 'System') {
+                cssFontName = font;
+            }
+
+            if (fontReady) {
+                doStartArt(text);
+            } else {
+                pendingText = text;
+                pendingFont = font;
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            boxW = width * 0.30;
+            boxH = height * 0.18;
+            boxX = width / 2;
+            boxY = height * 0.82;
+        }
+
+        function mousePressed() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action) {
+                window.webkit.messageHandlers.action.postMessage('showActionSheet');
+            }
+        }
+
+        // --- Recording ---
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        function startRecording() {
+            recordedChunks = [];
+            const canvas = document.querySelector('canvas');
+            const stream = canvas.captureStream(60);
+            let options = { mimeType: 'video/mp4', videoBitsPerSecond: 5000000 };
+            if (typeof MediaRecorder !== 'undefined') {
+                if (!MediaRecorder.isTypeSupported('video/mp4')) {
+                    options = { mimeType: 'video/webm', videoBitsPerSecond: 5000000 };
+                }
+                mediaRecorder = new MediaRecorder(stream, options);
+                mediaRecorder.ondataavailable = function (e) {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
+                mediaRecorder.start();
+            }
+        }
+
+        function stopRecordingAndGetResult() {
+            if (!mediaRecorder) return;
+            mediaRecorder.onstop = function () {
+                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = function () {
+                    const base64data = reader.result;
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.videoCallback) {
+                        window.webkit.messageHandlers.videoCallback.postMessage(base64data);
+                    }
+                }
+            };
+            mediaRecorder.stop();
+        }
+    </script>
+</body>
+
+</html>
