@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The Birth of Music</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #FDFCFA;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        let lines = [];
+        let musicalLines = [];
+        let customFont = 'System';
+
+        // 调色板：参考视觉效果提供红、蓝、绿、金等颜色
+        const palettes = ['#D32F2F', '#1976D2', '#388E3C', '#FBC02D', '#7B1FA2', '#E64A19', '#00796B'];
+
+        let isP5Ready = false;
+        let pendingText = null;
+
+        // 辅助函数：生成复合正弦波以更平滑
+        function compositeWave(y, timeOffset) {
+            // 主波：极长波长，控制主要S型走势
+            let waveFreq1 = TWO_PI / 1200.0;
+            let wave1 = sin(y * waveFreq1 - timeOffset * 0.8) * (width * 0.35);
+
+            // 次波：同样超长波幅，只为了打破绝对对称的生硬感，去除小起伏
+            let waveFreq2 = TWO_PI / 1800.0;
+            let wave2 = sin(y * waveFreq2 + timeOffset * 0.4) * (width * 0.15);
+
+            return wave1 + wave2;
+        }
+
+        class MusicalLine {
+            constructor(text, yOffset) {
+                this.text = text;
+                this.reset(yOffset);
+            }
+
+            reset(yOffset = -random(50, 300)) {
+                this.y = yOffset;
+                this.baseX = width / 2;
+                // 更小的字体，视觉更精致
+                this.size = random(8, 22);
+                this.color = random(palettes);
+                // 更快的滚动速度
+                this.speed = random(3.0, 7.0);
+            }
+
+            update() {
+                this.y += this.speed;
+                // 滚动到底部以外后，从顶部重新进入
+                if (this.y > height + 300) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                push();
+                let timeOffset = frameCount * 0.05;
+
+                // 使用复合波动函数
+                let waveX = this.baseX + compositeWave(this.y, timeOffset);
+
+                // 计算复合波斜率 (tangent)
+                let waveXNext = this.baseX + compositeWave(this.y - 1, timeOffset);
+                let dx = waveXNext - waveX;
+                let dy = -1;
+
+                // 为了避免复合波切线抖动过于剧烈，可以加一个平滑或限制
+                let tangentAngle = atan2(dy, dx) + HALF_PI;
+                // 限制旋转角度以免倒挂太严重
+                tangentAngle = constrain(tangentAngle, -0.6, 0.6);
+
+                translate(waveX, this.y);
+                rotate(tangentAngle);
+                fill(this.color);
+                textSize(this.size);
+                textAlign(CENTER, CENTER);
+                drawingContext.globalAlpha = 0.75;
+                text(this.text, 0, 0);
+                pop();
+            }
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            frameRate(60);
+            textFont(customFont);
+            noStroke();
+            isP5Ready = true;
+            // 如果 Swift 已经发来了真正的文本，就用它，否则留空等待
+            if (pendingText !== null) {
+                initLines(pendingText);
+            }
+        }
+
+        function draw() {
+            // 暖白色背景
+            background(253, 252, 250);
+
+            // 绘制复合曲线背景
+            stroke(200, 80);
+            strokeWeight(1);
+            noFill();
+            beginShape();
+            let timeOffset = frameCount * 0.05;
+            // 为了圆滑曲线，步进稍微小点
+            for (let y = 0; y < height; y += 8) {
+                let x = width / 2 + compositeWave(y, timeOffset);
+                vertex(x, y);
+            }
+            endShape();
+            noStroke();
+
+            for (let ml of musicalLines) {
+                ml.update();
+                ml.draw();
+            }
+        }
+
+        function initLines(text) {
+            let parsedLines = text.split('\n').filter(l => l.trim().length > 0);
+            if (parsedLines.length > 0) {
+                lines = parsedLines;
+            } else if (lines.length === 0) {
+                lines = ['音乐的诞生'];
+            }
+
+            musicalLines = [];
+
+            // 粒子数量 = clamp(行数, 100, 150)
+            // 行数不足 100 时循环补全；超过 150 时封顶，避免性能下降
+            const PARTICLE_COUNT = Math.min(Math.max(lines.length, 100), 150);
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let lineText = lines[i % lines.length];
+                let yOffset = random(-height, height);
+                musicalLines.push(new MusicalLine(lineText, yOffset));
+            }
+        }
+
+        // SwiftUI 调用的接口
+        function startArt(text, font) {
+            if (font) {
+                customFont = font;
+                try { textFont(customFont); } catch (e) { }
+            }
+            if (isP5Ready) {
+                initLines(text);
+            } else {
+                pendingText = text;
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+
+        // 监听点击事件，呼出按钮
+        function mousePressed() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action) {
+                window.webkit.messageHandlers.action.postMessage('showActionSheet');
+            }
+        }
+
+        // --- 录制导出相关 ---
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        function startRecording() {
+            recordedChunks = [];
+            const canvas = document.querySelector('canvas');
+            // 提升抓取帧率为60
+            const stream = canvas.captureStream(60);
+
+            // 增加码率保证高帧率下的清晰度
+            let options = { mimeType: 'video/mp4', videoBitsPerSecond: 5000000 };
+            if (typeof MediaRecorder !== 'undefined') {
+                if (!MediaRecorder.isTypeSupported('video/mp4')) {
+                    options = { mimeType: 'video/webm', videoBitsPerSecond: 5000000 };
+                }
+                mediaRecorder = new MediaRecorder(stream, options);
+
+                mediaRecorder.ondataavailable = function (e) {
+                    if (e.data.size > 0) {
+                        recordedChunks.push(e.data);
+                    }
+                };
+                mediaRecorder.start();
+            } else {
+                console.error('MediaRecorder API not supported');
+            }
+        }
+
+        // 此方法返回给 Swift
+        function stopRecordingAndGetResult() {
+            if (!mediaRecorder) {
+                return;
+            }
+            mediaRecorder.onstop = function () {
+                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = function () {
+                    const base64data = reader.result;
+                    // 将 base64 传回给 Swift
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.videoCallback) {
+                        window.webkit.messageHandlers.videoCallback.postMessage(base64data);
+                    }
+                }
+            };
+            mediaRecorder.stop();
+        }
+    </script>
+</body>
+
+</html>
