@@ -45,9 +45,11 @@ struct PortfolioView: View {
         }
         .navigationTitle("作品集")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $selectedItem) { item in
-            PortfolioDetailView(item: item)
-                .environmentObject(portfolioStore)
+        .fullScreenCover(item: $selectedItem) { item in
+            if let index = portfolioStore.items.firstIndex(where: { $0.id == item.id }) {
+                PortfolioDetailView(items: portfolioStore.items, initialIndex: index)
+                    .environmentObject(portfolioStore)
+            }
         }
     }
 
@@ -84,7 +86,7 @@ struct PortfolioView: View {
                 .padding(.vertical, 4)
                 .background(.ultraThinMaterial)
                 .foregroundColor(.white)
-                .cornerRadius(8, style: .continuous)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .padding(8)
             }
 

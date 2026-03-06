@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>潮湿的雨夜</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        @font-face {
+            font-family: 'LXGWWenKai-Light';
+            src: url('LXGWWenKai-Light.ttf') format('truetype');
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #ffffff;
+            color-scheme: light dark;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body { background-color: #000000; }
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            margin-top: 60px;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        let inputText = '';
+        let customFont = 'System';
+
+        let isP5Ready = false;
+        let pendingText = null;
+        let pendingFont = null;
+        let fontReady = false;
+
+        // Two static layers (rendered once)
+        let clearGfx;  // #0257E7 bg + white text, sharp
+        let blurGfx;   // #0273FC bg + white text, blurred
+
+        // Rain state
+        let drops = [];
+        const MAX_DROPS = 30;
+        let spawnTimer = 0;
+        let spawnInterval = 20; // frames between spawns (randomized)
+        let sceneReady = false;
+
+        let fontSize = 16;
+
+        // ─── Raindrop ───
+        class Raindrop {
+            constructor() {
+                // Start at random x along top edge
+                this.x = random(0, width);
+                this.y = 0;
+                this.prevX = this.x;
+                this.prevY = this.y;
+
+                // Growth speed: random, pixels per frame
+                this.speed = random(1.5, 4);
+
+                // Thickness = fontSize/3 * random(0.5~1)
+                this.thickness = (fontSize / 3) * random(0.5, 1.0);
+
+                // Max length: 50%~100% of canvas height
+                this.maxLen = random(height * 0.5, height);
+                this.traveled = 0;
+
+                this.active = true;
+            }
+
+            update() {
+                if (!this.active) return;
+
+                this.prevX = this.x;
+                this.prevY = this.y;
+
+                // Grow downward
+                this.y += this.speed;
+
+                // Random x drift per frame: -1 to 1
+                this.x += random(-1, 1);
+                this.x = constrain(this.x, 0, width);
+
+                this.traveled += this.speed;
+
+                if (this.traveled >= this.maxLen || this.y > height) {
+                    this.active = false;
+                }
+            }
+        }
+
+        // ─── Setup ───
+        function setup() {
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            createCanvas(cw, ch);
+            pixelDensity(1);
+            frameRate(60);
+
+            isP5Ready = true;
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.p5Ready) {
+                window.webkit.messageHandlers.p5Ready.postMessage('ready');
+            }
+            if (pendingText !== null) {
+                startArt(pendingText, pendingFont);
+                pendingText = null;
+                pendingFont = null;
+            }
+        }
+
+        // ─── Fill text across entire screen ───
+        function fillTextOnGraphics(gfx, bgR, bgG, bgB) {
+            gfx.background(bgR, bgG, bgB);
+            gfx.fill(255);
+            gfx.noStroke();
+            gfx.textAlign(LEFT, TOP);
+            if (customFont !== 'System') {
+                try { gfx.textFont(customFont); } catch (e) { }
+            }
+            gfx.textSize(fontSize);
+
+            let lineH = fontSize * 1.5;
+            let padding = 12;
+            let x = padding;
+            let y = padding;
+
+            // Build a long repeating string from input text
+            let raw = inputText.replace(/\n/g, ' ').trim();
+            if (raw.length === 0) raw = '潮湿的雨夜';
+
+            // Repeat enough to fill screen
+            let longText = '';
+            let needed = Math.ceil((width * height) / (fontSize * fontSize)) * 2;
+            while (longText.length < needed) {
+                longText += raw + '  ';
+            }
+
+            // Lay out character by character, wrapping at screen edge
+            let maxX = width - padding;
+            let i = 0;
+            while (y < height + lineH && i < longText.length) {
+                let ch = longText[i];
+                let cw = gfx.textWidth(ch);
+
+                if (x + cw > maxX) {
+                    x = padding;
+                    y += lineH;
+                }
+
+                if (y > height) break;
+
+                gfx.text(ch, x, y);
+                x += cw;
+                i++;
+            }
+        }
+
+        // ─── Downscale-upscale blur (proven to work in WKWebView) ───
+        function blurCanvas(srcCanvas, dstGfx) {
+            let ctx = dstGfx.drawingContext;
+
+            // 3-step downscale: full  1/4  1/16  1/32
+            let w1 = Math.max(Math.floor(width / 4), 1);
+            let h1 = Math.max(Math.floor(height / 4), 1);
+            let w2 = Math.max(Math.floor(width / 16), 1);
+            let h2 = Math.max(Math.floor(height / 16), 1);
+            let w3 = Math.max(Math.floor(width / 32), 1);
+            let h3 = Math.max(Math.floor(height / 32), 1);
+
+            let c1 = document.createElement('canvas');
+            c1.width = w1; c1.height = h1;
+            let x1 = c1.getContext('2d');
+
+            let c2 = document.createElement('canvas');
+            c2.width = w2; c2.height = h2;
+            let x2 = c2.getContext('2d');
+
+            let c3 = document.createElement('canvas');
+            c3.width = w3; c3.height = h3;
+            let x3 = c3.getContext('2d');
+
+            x1.drawImage(srcCanvas, 0, 0, w1, h1);
+            x2.drawImage(c1, 0, 0, w2, h2);
+            x3.drawImage(c2, 0, 0, w3, h3);
+
+            // Stretch back to full size
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(c3, 0, 0, width, height);
+        }
+
+        //  Build scene 
+        function buildScene() {
+            fontSize = 16;
+
+            // 1. Clear image: #0257E7 bg + white text, sharp
+            if (clearGfx) clearGfx.remove();
+            clearGfx = createGraphics(width, height);
+            fillTextOnGraphics(clearGfx, 2, 87, 231); // #0257E7
+
+            // 2. Blur image: #0273FC bg + white text, then blur
+            if (blurGfx) blurGfx.remove();
+            blurGfx = createGraphics(width, height);
+            // First render sharp text on #0273FC
+            let sharpForBlur = createGraphics(width, height);
+            fillTextOnGraphics(sharpForBlur, 2, 115, 252); // #0273FC
+            // Apply downscale blur onto blurGfx
+            blurCanvas(sharpForBlur.elt, blurGfx);
+            sharpForBlur.remove();
+
+            // 3. Draw blurGfx as initial canvas content
+            drawingContext.drawImage(blurGfx.elt, 0, 0);
+
+            drops = [];
+            spawnTimer = 0;
+            spawnInterval = Math.floor(random(12, 25));
+            sceneReady = true;
+        }
+
+        // ─── Draw loop ───
+        function draw() {
+            if (!fontReady || !sceneReady) {
+                background(2, 115, 252);
+                return;
+            }
+
+            // NO background() — accumulate clear stamps on top of blur
+
+            // Spawn drops with randomized interval
+            spawnTimer++;
+            if (spawnTimer >= spawnInterval && drops.length < MAX_DROPS) {
+                drops.push(new Raindrop());
+                spawnTimer = 0;
+                spawnInterval = Math.floor(random(8, 30));
+            }
+
+            // Update all drops
+            for (let d of drops) {
+                d.update();
+            }
+
+            // Stamp clearGfx through clip paths of all active drops' new segments
+            let ctx = drawingContext;
+            ctx.save();
+            ctx.beginPath();
+            let hasClip = false;
+
+            for (let d of drops) {
+                if (!d.active) continue;
+
+                let segLen = dist(d.prevX, d.prevY, d.x, d.y);
+                let steps = Math.max(Math.ceil(segLen / (d.thickness * 0.3)), 1);
+
+                for (let s = 0; s <= steps; s++) {
+                    let t = s / steps;
+                    let px = d.prevX + (d.x - d.prevX) * t;
+                    let py = d.prevY + (d.y - d.prevY) * t;
+                    let r = d.thickness * 0.5;
+                    // Slightly larger at tip
+                    if (s === steps) r = d.thickness * 0.65;
+                    ctx.moveTo(px + r, py);
+                    ctx.arc(px, py, r, 0, Math.PI * 2);
+                    hasClip = true;
+                }
+            }
+
+            if (hasClip) {
+                ctx.clip();
+                ctx.drawImage(clearGfx.elt, 0, 0);
+            }
+            ctx.restore();
+
+            drops = drops.filter(d => d.active);
+        }
+
+        // ─── API for Swift ───
+        function initLines(text) {
+            inputText = text.trim();
+            if (inputText.length === 0) inputText = '潮湿的雨夜';
+        }
+
+        function startArt(text, font) {
+            if (!isP5Ready) {
+                pendingText = text;
+                pendingFont = font;
+                return;
+            }
+
+            if (font && font !== 'System') {
+                customFont = font;
+                document.fonts.load('16px "' + font + '"').then(function () {
+                    try { textFont(customFont); } catch (e) { }
+                    fontReady = true;
+                    initLines(text);
+                    buildScene();
+                });
+            } else {
+                fontReady = true;
+                initLines(text);
+                buildScene();
+            }
+        }
+
+        function windowResized() {
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            resizeCanvas(cw, ch);
+            drops = [];
+            sceneReady = false;
+            if (fontReady) {
+                buildScene();
+            }
+        }
+
+        function mousePressed() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action) {
+                window.webkit.messageHandlers.action.postMessage('showActionSheet');
+            }
+        }
+
+        // ─── Recording ───
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        function startRecording() {
+            // Reset scene: clear all trails, redraw blurred background
+            drops = [];
+            spawnTimer = 0;
+            spawnInterval = Math.floor(random(12, 25));
+            drawingContext.drawImage(blurGfx.elt, 0, 0);
+
+            recordedChunks = [];
+            const canvas = document.querySelector('canvas');
+            const stream = canvas.captureStream(60);
+
+            let options = { mimeType: 'video/mp4', videoBitsPerSecond: 5000000 };
+            if (typeof MediaRecorder !== 'undefined') {
+                if (!MediaRecorder.isTypeSupported('video/mp4')) {
+                    options = { mimeType: 'video/webm', videoBitsPerSecond: 5000000 };
+                }
+                mediaRecorder = new MediaRecorder(stream, options);
+                mediaRecorder.ondataavailable = function (e) {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
+                mediaRecorder.start();
+            }
+        }
+
+        function stopRecordingAndGetResult() {
+            if (!mediaRecorder) return;
+            mediaRecorder.onstop = function () {
+                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = function () {
+                    const base64data = reader.result;
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.videoCallback) {
+                        window.webkit.messageHandlers.videoCallback.postMessage(base64data);
+                    }
+                }
+            };
+            mediaRecorder.stop();
+        }
+    </script>
+</body>
+
+</html>

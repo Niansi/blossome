@@ -21,11 +21,18 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
-            background-color: #FDFCFA;
+            background-color: #ffffff;
+            color-scheme: light dark;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body { background-color: #000000; }
         }
 
         canvas {
             display: block;
+            margin: 0 auto;
+            margin-top: 60px;
         }
     </style>
 </head>
@@ -110,7 +117,11 @@
         }
 
         function setup() {
-            createCanvas(windowWidth, windowHeight);
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            createCanvas(cw, ch);
             frameRate(60);
             noStroke();
             isP5Ready = true;
@@ -197,7 +208,11 @@
         }
 
         function windowResized() {
-            resizeCanvas(windowWidth, windowHeight);
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            resizeCanvas(cw, ch);
         }
 
         // 监听点击事件，呼出按钮

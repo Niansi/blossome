@@ -10,6 +10,7 @@ import SwiftUI
 enum ArtEffect: String, Identifiable {
     case sketch
     case mcdonald
+    case rainynight
 
     var id: String { rawValue }
 
@@ -19,13 +20,15 @@ enum ArtEffect: String, Identifiable {
         switch self {
         case .sketch: return "LXGWWenKai-Light"
         case .mcdonald: return "McDonaldsFriesFont"
+        case .rainynight: return "LXGWWenKai-Light"
         }
     }
-    
+
     var displayName: String {
         switch self {
         case .sketch: return "音乐的诞生"
         case .mcdonald: return "麦门"
+        case .rainynight: return "潮湿的雨夜"
         }
     }
 }
@@ -74,6 +77,11 @@ struct ContentView: View {
                         } label: {
                             Label("麦门", systemImage: "flame")
                         }
+                        Button {
+                            activeArtEffect = .rainynight
+                        } label: {
+                            Label("潮湿的雨夜", systemImage: "cloud.rain")
+                        }
                     } label: {
                         Text("Art").bold()
                     }
@@ -109,7 +117,7 @@ struct ContentView: View {
                                 MediaSaver.shared.saveLivePhoto(base64String: base64) { success, error in
                                     print("LivePhoto saved: \(success), error: \(error?.localizedDescription ?? "none")")
                                     if success {
-                                        portfolioStore.saveToPortfolio(base64String: base64, effectName: effectName, type: itemType) { item in
+                                        portfolioStore.saveLivePhotoToPortfolio(base64String: base64, effectName: effectName) { item in
                                             if let item = item {
                                                 savedPortfolioItem = item
                                                 showingSaveSuccess = true
@@ -137,40 +145,54 @@ struct ContentView: View {
                     
                     VStack {
                         HStack {
-                            Spacer()
                             Button(action: { activeArtEffect = nil }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 30))
-                                    .foregroundColor(Color.gray.opacity(0.8))
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 36, height: 36)
+                                    .glassEffect(.regular)
                             }
-                            .padding()
+                            Spacer()
                         }
+                        .padding()
                         
                         Spacer()
                         
                         // 显式添加底部导出按钮组，确保用户可以看见
                         if !isRecording {
-                            HStack(spacing: 16) {
-                                Button(action: {
-                                    startRecordingProcess()
-                                }) {
+                            HStack(spacing: 0) {
+                                Menu {
+                                    Button("5 秒") { startRecordingProcess(duration: 5) }
+                                    Button("15 秒") { startRecordingProcess(duration: 15) }
+                                    Button("30 秒") { startRecordingProcess(duration: 30) }
+                                } label: {
                                     HStack(spacing: 8) {
                                         Image(systemName: "video.fill")
                                         Text("保存为视频")
                                     }
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 14)
                                 }
-                                .buttonStyle(.liquidGlass(backgroundColor: .blue))
-                                
+
+                                Divider()
+                                    .frame(height: 24)
+
                                 Button(action: {
                                     startRecordingProcess(forLivePhoto: true)
                                 }) {
                                     HStack(spacing: 8) {
                                         Image(systemName: "livephoto")
-                                        Text("保存为 LivePhoto")
+                                        Text("LivePhoto")
                                     }
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 14)
                                 }
-                                .buttonStyle(.liquidGlass(backgroundColor: .purple))
                             }
+                            .glassEffect(.regular)
                             .padding(.bottom, 40)
                         }
                     }
@@ -203,14 +225,13 @@ struct ContentView: View {
         }
     }
     
-    func startRecordingProcess(forLivePhoto: Bool = false) {
+    func startRecordingProcess(forLivePhoto: Bool = false, duration: Double = 5) {
         isRecording = true
         isLivePhotoRecording = forLivePhoto
         webViewManager.startRecording()
-        
-        // LivePhoto 录制 3 秒，普通视频录制 5 秒
-        let duration: Double = forLivePhoto ? 3.0 : 5.0
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+
+        let recordDuration: Double = forLivePhoto ? 3.0 : duration
+        DispatchQueue.main.asyncAfter(deadline: .now() + recordDuration) {
             webViewManager.stopRecording()
         }
     }

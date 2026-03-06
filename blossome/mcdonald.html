@@ -16,11 +16,18 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
-            background-color: #D4B587;
+            background-color: #ffffff;
+            color-scheme: light dark;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body { background-color: #000000; }
         }
 
         canvas {
             display: block;
+            margin: 0 auto;
+            margin-top: 60px;
         }
     </style>
 </head>
@@ -167,16 +174,156 @@
         }
 
         // ==============
-        // Decorative Fry
+        // Decorative Fry (rigid body particle)
         // ==============
         class DecoFry {
-            constructor() {
-                this.offsetX = (Math.random() - 0.5) * 0.5;
-                this.baseAngle = (Math.random() - 0.5) * 0.35;
-                this.h = 0.15 + Math.random() * 0.15;
+            constructor(isInner) {
+                this.isInner = isInner || false;
+                // Position as fraction of boxW from center
+                this.offsetX = (Math.random() - 0.5) * (this.isInner ? 0.5 : 0.4);
+                this.baseAngle = (Math.random() - 0.5) * (this.isInner ? 0.25 : 0.35);
+                // Inner fries are shorter, hidden inside box
+                this.h = this.isInner ? (0.06 + Math.random() * 0.08) : (0.15 + Math.random() * 0.15);
                 this.w = 0.04 + Math.random() * 0.02;
                 this.colorIdx = Math.floor(Math.random() * GOLD_COLORS.length);
                 this.phase = Math.random() * Math.PI * 2;
+
+                // Curve shape: control point offsets for bezier (fraction of fry height)
+                this.curveMid1 = (Math.random() - 0.5) * 0.4;  // lateral bend at 1/3 height
+                this.curveMid2 = (Math.random() - 0.5) * 0.3;  // lateral bend at 2/3 height
+
+                // Physics state
+                this.vx = 0;
+                this.vy = 0;
+                this.vAngle = 0;
+                this.dynAngle = 0;
+                this.dynX = 0;
+                this.dynY = 0;
+                this.prevShakeX = 0;
+                this.prevShakeY = 0;
+                // Inner fries start pushed down, pop up during shake
+                this.popUp = this.isInner ? 0 : 1; // 0 = hidden, 1 = fully visible
+            }
+
+            update(shakeIntensity) {
+                if (shakeIntensity < 0.01) {
+                    // No shake — keep current position, just damp velocity
+                    this.vx *= 0.8;
+                    this.vy *= 0.8;
+                    this.vAngle *= 0.8;
+                    this.prevShakeX = 0;
+                    this.prevShakeY = 0;
+                    // Inner fries slowly sink back
+                    if (this.isInner) {
+                        this.popUp = Math.max(0, this.popUp - 0.01);
+                    }
+                    return;
+                }
+
+                // Inner fries pop up during shake
+                if (this.isInner) {
+                    this.popUp = Math.min(1, this.popUp + 0.05);
+                }
+
+                // Box shake acceleration = change in shake displacement
+                let curShakeX = sin(frameCount * 0.6) * 2 * shakeIntensity;
+                let curShakeY = cos(frameCount * 0.5) * 1 * shakeIntensity;
+                let accelX = (curShakeX - this.prevShakeX) * 3.0;
+                let accelY = (curShakeY - this.prevShakeY) * 3.0;
+                this.prevShakeX = curShakeX;
+                this.prevShakeY = curShakeY;
+
+                // Apply inertial force
+                this.vx -= accelX * (0.8 + Math.random() * 0.4);
+                this.vy -= accelY * (0.8 + Math.random() * 0.4);
+
+                // Random jitter from collisions
+                this.vx += (Math.random() - 0.5) * shakeIntensity * 1.5;
+                this.vy += (Math.random() - 0.5) * shakeIntensity * 0.8;
+                this.vAngle += (Math.random() - 0.5) * shakeIntensity * 0.03;
+
+                // Damping
+                this.vx *= 0.75;
+                this.vy *= 0.75;
+                this.vAngle *= 0.8;
+
+                // Integrate
+                this.dynX += this.vx;
+                this.dynY += this.vy;
+                this.dynAngle += this.vAngle;
+
+                // Bounce off walls
+                let maxDX = boxW * 0.12;
+                let maxDY = boxH * 0.06;
+                let maxAngle = 0.4;
+                if (this.dynX > maxDX) { this.dynX = maxDX; this.vx *= -0.5; }
+                if (this.dynX < -maxDX) { this.dynX = -maxDX; this.vx *= -0.5; }
+                if (this.dynY > maxDY) { this.dynY = maxDY; this.vy *= -0.5; }
+                if (this.dynY < -maxDY) { this.dynY = -maxDY; this.vy *= -0.5; }
+                this.dynAngle = constrain(this.dynAngle, -maxAngle, maxAngle);
+            }
+
+            drawFry(bw, bh, topY) {
+                if (this.isInner && this.popUp < 0.02) return;
+
+                this.update(shakeIntensity);
+                push();
+                let fx = this.offsetX * bw + this.dynX;
+                let effectiveH = this.h * bh;
+                // Inner fries: slide up/down based on popUp
+                let yOff = this.isInner ? topY + effectiveH * (1 - this.popUp) : topY;
+                translate(fx, yOff + this.dynY);
+                rotate(this.baseAngle + this.dynAngle);
+                noStroke();
+                let rgb = goldRGBs[this.colorIdx];
+                let fw = this.w * bw;
+                let fh = effectiveH;
+
+                // Draw curved fry using bezier quad strip
+                let halfW = fw / 2;
+                let bend1 = this.curveMid1 * fh;
+                let bend2 = this.curveMid2 * fh;
+
+                // Main body
+                fill(rgb[0], rgb[1], rgb[2]);
+                beginShape();
+                // Left edge (bottom to top)
+                vertex(-halfW, 0);
+                bezierVertex(
+                    -halfW + bend1, -fh * 0.33,
+                    -halfW + bend2, -fh * 0.66,
+                    -halfW + bend1 * 0.5 + bend2 * 0.5, -fh
+                );
+                // Top cap
+                vertex(halfW + bend1 * 0.5 + bend2 * 0.5, -fh);
+                // Right edge (top to bottom)
+                bezierVertex(
+                    halfW + bend2, -fh * 0.66,
+                    halfW + bend1, -fh * 0.33,
+                    halfW, 0
+                );
+                endShape(CLOSE);
+
+                // Lighter tip (top 22%)
+                fill(255, 255, 210, 140);
+                beginShape();
+                let tipStart = -fh * 0.78;
+                let t78 = 0.78;
+                let bendAtTip = bend1 * (1 - t78) + bend2 * t78;
+                vertex(-halfW + bendAtTip, tipStart);
+                bezierVertex(
+                    -halfW + bend2, -fh * 0.85,
+                    -halfW + bend2 * 0.8 + bend1 * 0.2, -fh * 0.95,
+                    -halfW + bend1 * 0.5 + bend2 * 0.5, -fh
+                );
+                vertex(halfW + bend1 * 0.5 + bend2 * 0.5, -fh);
+                bezierVertex(
+                    halfW + bend2 * 0.8 + bend1 * 0.2, -fh * 0.95,
+                    halfW + bend2, -fh * 0.85,
+                    halfW + bendAtTip, tipStart
+                );
+                endShape(CLOSE);
+                pop();
             }
         }
 
@@ -209,22 +356,7 @@
 
             // --- Fries peeking out ---
             for (let df of decoFries) {
-                push();
-                let fx = df.offsetX * bw;
-                let wobble = sin(frameCount * 0.07 + df.phase) * 0.015 * (1 + shakeIntensity);
-                translate(fx, topY);
-                rotate(df.baseAngle + wobble);
-                noStroke();
-                let rgb = goldRGBs[df.colorIdx];
-                fill(rgb[0], rgb[1], rgb[2]);
-                let fw = df.w * bw;
-                let fh = df.h * bh;
-                rectMode(CORNER);
-                rect(-fw / 2, -fh, fw, fh, fw * 0.35);
-                // Lighter tip
-                fill(255, 255, 210, 140);
-                rect(-fw / 2, -fh, fw, fh * 0.22, fw * 0.35);
-                pop();
+                df.drawFry(bw, bh, topY);
             }
 
             noStroke();
@@ -456,12 +588,16 @@
         // P5.js
         // ======
         function setup() {
-            createCanvas(windowWidth, windowHeight);
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            createCanvas(cw, ch);
             frameRate(60);
             noStroke();
 
             boxW = width * 0.30;
-            boxH = height * 0.18;
+            boxH = boxW * 1.20;
             boxX = width / 2;
             boxY = height * 0.82;
 
@@ -470,8 +606,11 @@
                 goldRGBs.push([red(col), green(col), blue(col)]);
             }
 
+            for (let i = 0; i < 10; i++) {
+                decoFries.push(new DecoFry(false));
+            }
             for (let i = 0; i < 8; i++) {
-                decoFries.push(new DecoFry());
+                decoFries.push(new DecoFry(true));
             }
 
             isP5Ready = true;
@@ -545,9 +684,13 @@
         }
 
         function windowResized() {
-            resizeCanvas(windowWidth, windowHeight);
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            resizeCanvas(cw, ch);
             boxW = width * 0.30;
-            boxH = height * 0.18;
+            boxH = boxW * 1.20;
             boxX = width / 2;
             boxY = height * 0.82;
         }
