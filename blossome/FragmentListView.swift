@@ -17,12 +17,15 @@ struct FragmentListView: View {
             ZStack(alignment: .bottomTrailing) {
                 List {
                     ForEach(fragmentStore.fragments) { fragment in
-                        FragmentRowView(fragment: fragment)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                selectedFragmentID = fragment.id
-                            }
-                            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                        Button {
+                            selectedFragmentID = fragment.id
+                        } label: {
+                            FragmentRowView(fragment: fragment)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                     }
                     .onDelete(perform: deleteItems)
                 }
@@ -115,24 +118,9 @@ struct FragmentRowView: View {
 
 extension Date {
     var fragmentTimeString: String {
-        let calendar = Calendar.current
-        let now = Date()
-
-        if calendar.isDateInToday(self) {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            return formatter.string(from: self)
-        } else if calendar.isDateInYesterday(self) {
-            return "昨天"
-        } else if calendar.isDate(self, equalTo: now, toGranularity: .year) {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "M月d日"
-            return formatter.string(from: self)
-        } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy/M/d"
-            return formatter.string(from: self)
-        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        return formatter.string(from: self)
     }
 }
 
