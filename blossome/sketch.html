@@ -26,7 +26,9 @@
         }
 
         @media (prefers-color-scheme: dark) {
-            body { background-color: #000000; }
+            body {
+                background-color: #000000;
+            }
         }
 
         canvas {
@@ -186,6 +188,12 @@
         }
 
         // SwiftUI 调用的接口
+        function notifyTextRendered() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.textRendered) {
+                window.webkit.messageHandlers.textRendered.postMessage('done');
+            }
+        }
+
         function startArt(text, font) {
             if (!isP5Ready) {
                 pendingText = text;
@@ -200,10 +208,12 @@
                     try { textFont(customFont); } catch (e) { }
                     fontReady = true;
                     initLines(text);
+                    notifyTextRendered();
                 });
             } else {
                 fontReady = true;
                 initLines(text);
+                notifyTextRendered();
             }
         }
 

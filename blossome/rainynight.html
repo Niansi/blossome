@@ -16,7 +16,9 @@
         }
 
         @media (prefers-color-scheme: dark) {
-            body { background-color: #000000; }
+            body {
+                background-color: #000000;
+            }
         }
 
         canvas {
@@ -280,6 +282,12 @@
             if (inputText.length === 0) inputText = '潮湿的雨夜';
         }
 
+        function notifyTextRendered() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.textRendered) {
+                window.webkit.messageHandlers.textRendered.postMessage('done');
+            }
+        }
+
         function startArt(text, font) {
             if (!isP5Ready) {
                 pendingText = text;
@@ -294,11 +302,13 @@
                     fontReady = true;
                     initLines(text);
                     buildScene();
+                    notifyTextRendered();
                 });
             } else {
                 fontReady = true;
                 initLines(text);
                 buildScene();
+                notifyTextRendered();
             }
         }
 

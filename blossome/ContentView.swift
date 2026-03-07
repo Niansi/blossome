@@ -51,9 +51,10 @@ struct ContentView: View {
     @State private var showingActionSheet = false
     @State private var isRecording = false
     @State private var isLivePhotoRecording = false
+    @State private var isArtLoading = true
 
     @State private var showingPortfolio = false
-    @State private var showingSaveSuccess = false
+    @State private var fluidProgressState: FluidProgressState = .idle
     @State private var savedPortfolioItem: PortfolioItem? = nil
     @State private var navigateToPortfolioFromOverlay = false
 
@@ -64,15 +65,11 @@ struct ContentView: View {
     @State private var saveTimer: Timer? = nil
     
     var body: some View {
-        VStack {
-            TextEditor(text: $notepadText)
-                .font(.body)
-                .padding()
-                .focused($isNotepadFocused)
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        TextEditor(text: $notepadText)
+            .font(.body)
+            .padding(.horizontal)
+            .focused($isNotepadFocused)
+            .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -140,7 +137,6 @@ struct ContentView: View {
                         showingActionSheet = true
                     },
                     onVideoGenerated: { base64 in
-                        isRecording = false
                         let effectName = effect.displayName
                         let itemType: PortfolioItemType = isLivePhotoRecording ? .livePhoto : .video
 
@@ -151,9 +147,15 @@ struct ContentView: View {
                                     portfolioStore.saveLivePhotoToPortfolio(base64String: base64, effectName: effectName) { item in
                                         if let item = item {
                                             savedPortfolioItem = item
-                                            showingSaveSuccess = true
+                                            fluidProgressState = .success
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                                                isRecording = false
+                                            }
                                         }
                                     }
+                                } else {
+                                    fluidProgressState = .error(error?.localizedDescription ?? "保存失败")
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { isRecording = false }
                                 }
                             }
                             isLivePhotoRecording = false
@@ -164,11 +166,22 @@ struct ContentView: View {
                                     portfolioStore.saveToPortfolio(base64String: base64, effectName: effectName, type: itemType) { item in
                                         if let item = item {
                                             savedPortfolioItem = item
-                                            showingSaveSuccess = true
+                                            fluidProgressState = .success
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                                                isRecording = false
+                                            }
                                         }
                                     }
+                                } else {
+                                    fluidProgressState = .error(error?.localizedDescription ?? "保存失败")
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { isRecording = false }
                                 }
                             }
+                        }
+                    },
+                    onTextRendered: {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            isArtLoading = false
                         }
                     }
                 )
@@ -194,7 +207,7 @@ struct ContentView: View {
                     Spacer()
                     
                     // 显式添加底部导出按钮组，使用 GlassEffectContainer 产生融合形变
-                    if !isRecording {
+                    if !isRecording && fluidProgressState == .idle {
                         GlassEffectContainer {
                             HStack(spacing: 8) {
                                 Menu {
@@ -233,28 +246,30 @@ struct ContentView: View {
                     }
                 }
                 
-                if isRecording {
-                    VStack {
-                        ProgressView("正在倾听并录制音符...")
-                            .padding(20)
-                            .background(Color(UIColor.systemBackground).opacity(0.9))
-                            .cornerRadius(12)
-                    }
+                if fluidProgressState != .idle {
+                    FluidProgressHUD(state: $fluidProgressState, onViewPortfolio: {
+                        fluidProgressState = .idle
+                        navigateToPortfolioFromOverlay = true
+                        activeArtEffect = nil
+                    })
+                    .transition(.scale.combined(with: .opacity))
+                    .zIndex(2)
                 }
 
-                if showingSaveSuccess, let item = savedPortfolioItem {
-                    SaveSuccessOverlay(
-                        item: item,
-                        portfolioStore: portfolioStore,
-                        onViewPortfolio: {
-                            showingSaveSuccess = false
-                            navigateToPortfolioFromOverlay = true
-                            activeArtEffect = nil
-                        },
-                        onDismiss: {
-                            showingSaveSuccess = false
+                // Loading 遮罩：等待文本渲染完成
+                if isArtLoading {
+                    ZStack {
+                        Color(UIColor.systemBackground)
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("准备中...")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                    )
+                    }
+                    .ignoresSafeArea()
+                    .transition(.opacity)
                 }
             }
         }
@@ -297,6 +312,9 @@ struct ContentView: View {
         // 强制重建一次 WebView，避免复用旧的 WKWebView/Coordinator 造成首次注入拿到旧文本。
         forcePreviewNonce &+= 1
 
+        // 重置 loading 状态
+        isArtLoading = true
+
         // 1) 强制提交 IME（拼音/手写）组合中的内容
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         isNotepadFocused = false
@@ -313,15 +331,28 @@ struct ContentView: View {
                 return
             }
             self.activeArtEffect = effect
+
+            // 超时保护：3 秒后强制隐藏 loading，避免永久 loading
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                if self.isArtLoading {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        self.isArtLoading = false
+                    }
+                }
+            }
         }
     }
 
     func startRecordingProcess(forLivePhoto: Bool = false, duration: Double = 5) {
         isRecording = true
         isLivePhotoRecording = forLivePhoto
+        
+        let recordDuration: Double = forLivePhoto ? 3.0 : duration
+        let mediaType: MediaType = forLivePhoto ? .livePhoto : .video
+        fluidProgressState = .processing(type: mediaType, estimatedDuration: recordDuration)
+
         webViewManager.startRecording()
 
-        let recordDuration: Double = forLivePhoto ? 3.0 : duration
         DispatchQueue.main.asyncAfter(deadline: .now() + recordDuration) {
             webViewManager.stopRecording()
         }

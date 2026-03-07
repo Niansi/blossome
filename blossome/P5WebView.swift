@@ -15,6 +15,7 @@ struct P5WebView: UIViewRepresentable {
     // Callbacks to parent
     var onActionRequested: () -> Void
     var onVideoGenerated: (String) -> Void
+    var onTextRendered: () -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let prefs = WKWebpagePreferences()
@@ -28,6 +29,7 @@ struct P5WebView: UIViewRepresentable {
         config.userContentController.add(context.coordinator, name: "action")
         config.userContentController.add(context.coordinator, name: "videoCallback")
         config.userContentController.add(context.coordinator, name: "p5Ready")
+        config.userContentController.add(context.coordinator, name: "textRendered")
 
         let webView = WKWebView(frame: .zero, configuration: config)
 
@@ -92,6 +94,8 @@ struct P5WebView: UIViewRepresentable {
                 if let base64Data = message.body as? String {
                     parent.onVideoGenerated(base64Data)
                 }
+            } else if message.name == "textRendered" {
+                parent.onTextRendered()
             }
         }
 

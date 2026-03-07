@@ -21,7 +21,9 @@
         }
 
         @media (prefers-color-scheme: dark) {
-            body { background-color: #000000; }
+            body {
+                background-color: #000000;
+            }
         }
 
         canvas {
@@ -661,6 +663,13 @@
             textInitialized = true;
             shakeIntensity = 0;
             transitionTo('SHAKING');
+            notifyTextRendered();
+        }
+
+        function notifyTextRendered() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.textRendered) {
+                window.webkit.messageHandlers.textRendered.postMessage('done');
+            }
         }
 
         // --- Swift API ---
