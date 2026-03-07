@@ -10,11 +10,13 @@ import SwiftUI
 @main
 struct blossomeApp: App {
     @StateObject private var portfolioStore = PortfolioStore.shared
+    @StateObject private var fragmentStore = FragmentStore.shared
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            FragmentListView()
                 .environmentObject(portfolioStore)
+                .environmentObject(fragmentStore)
         }
     }
 }

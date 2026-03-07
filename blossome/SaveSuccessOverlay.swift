@@ -19,7 +19,7 @@ struct SaveSuccessOverlay: View {
             VStack(spacing: 20) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(.green)
+                    .foregroundColor(.white)
 
                 Text("保存成功")
                     .font(.title2)
@@ -43,7 +43,7 @@ struct SaveSuccessOverlay: View {
                             Text("查看作品")
                         }
                     }
-                    .buttonStyle(.liquidGlass(backgroundColor: .blue))
+                    .buttonStyle(.glass)
 
                     Button(action: onDismiss) {
                         HStack(spacing: 8) {
@@ -51,7 +51,7 @@ struct SaveSuccessOverlay: View {
                             Text("继续创作")
                         }
                     }
-                    .buttonStyle(.liquidGlass(backgroundColor: .teal))
+                    .buttonStyle(.glass)
                 }
                 .padding(.horizontal, 40)
             }

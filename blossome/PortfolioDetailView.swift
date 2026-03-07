@@ -105,31 +105,50 @@ private struct PortfolioPageView: View {
             }
         }
         .onAppear {
+            preparePlayer()
             if isCurrentPage {
-                activatePlayer()
+                player?.play()
+                isPlaying = true
             }
         }
         .onDisappear {
             deactivatePlayer()
         }
+        .onChange(of: item.id) { _, _ in
+            // Defensive: ensure reused page views don't keep stale AVPlayer state.
+            deactivatePlayer()
+            preparePlayer()
+            if isCurrentPage {
+                player?.play()
+                isPlaying = true
+            }
+        }
     }
 
-    private func activatePlayer() {
+    private func preparePlayer() {
         guard item.type != .livePhoto else { return }
-        guard player == nil else {
-            player?.play()
-            isPlaying = true
-            return
-        }
+        guard player == nil else { return }
         let url = portfolioStore.fileURL(for: item)
         let p = AVPlayer(url: url)
+        p.pause()
         player = p
-        p.play()
-        isPlaying = true
+        isPlaying = false
         loopObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: p.currentItem, queue: .main) { _ in
             p.seek(to: .zero)
             p.play()
         }
+    }
+
+    private func activatePlayer() {
+        guard item.type != .livePhoto else { return }
+        if player != nil {
+            player?.play()
+            isPlaying = true
+            return
+        }
+        preparePlayer()
+        player?.play()
+        isPlaying = true
     }
 
     private func deactivatePlayer() {
@@ -234,11 +253,8 @@ struct PortfolioDetailView: View {
     @EnvironmentObject var portfolioStore: PortfolioStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var scrolledID: Int?
-
-    private var currentIndex: Int {
-        scrolledID ?? initialIndex
-    }
+    @State private var scrolledID: PortfolioItem.ID?
+    @State private var currentIndex: Int = 0
 
     private var currentItem: PortfolioItem {
         items[currentIndex]
@@ -252,12 +268,13 @@ struct PortfolioDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        PortfolioPageView(item: item, isCurrentPage: index == currentIndex)
+                        PortfolioPageView(item: item, isCurrentPage: item.id == scrolledID)
                             .environmentObject(portfolioStore)
                             .containerRelativeFrame(.horizontal)
-                            .id(index)
+                            .id(item.id)
                     }
                 }
+                .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $scrolledID)
@@ -305,8 +322,21 @@ struct PortfolioDetailView: View {
             }
         }
         .onAppear {
-            scrolledID = initialIndex
+            currentIndex = initialIndex
+            scrolledID = items[safe: initialIndex]?.id
+        }
+        .onChange(of: scrolledID) { _, newID in
+            if let newID, let idx = items.firstIndex(where: { $0.id == newID }) {
+                currentIndex = idx
+            }
         }
         .statusBarHidden()
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }

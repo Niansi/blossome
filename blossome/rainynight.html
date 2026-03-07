@@ -7,11 +7,6 @@
     <title>潮湿的雨夜</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <style>
-        @font-face {
-            font-family: 'LXGWWenKai-Light';
-            src: url('LXGWWenKai-Light.ttf') format('truetype');
-        }
-
         body {
             margin: 0;
             padding: 0;
@@ -130,7 +125,7 @@
             }
             gfx.textSize(fontSize);
 
-            let lineH = fontSize * 1.5;
+            let lineH = fontSize * 1.2;
             let padding = 12;
             let x = padding;
             let y = padding;
@@ -166,17 +161,16 @@
             }
         }
 
-        // ─── Downscale-upscale blur (proven to work in WKWebView) ───
+        // ─── 3-step Downscale-upscale blur (proven to work in WKWebView) ───
         function blurCanvas(srcCanvas, dstGfx) {
             let ctx = dstGfx.drawingContext;
 
-            // 3-step downscale: full  1/4  1/16  1/32
+            // 2-step downscale: full → 1/4 → 1/8
             let w1 = Math.max(Math.floor(width / 4), 1);
             let h1 = Math.max(Math.floor(height / 4), 1);
-            let w2 = Math.max(Math.floor(width / 16), 1);
-            let h2 = Math.max(Math.floor(height / 16), 1);
-            let w3 = Math.max(Math.floor(width / 32), 1);
-            let h3 = Math.max(Math.floor(height / 32), 1);
+
+            let w2 = Math.max(Math.floor(width / 8), 1);
+            let h2 = Math.max(Math.floor(height / 8), 1);
 
             let c1 = document.createElement('canvas');
             c1.width = w1; c1.height = h1;
@@ -186,19 +180,15 @@
             c2.width = w2; c2.height = h2;
             let x2 = c2.getContext('2d');
 
-            let c3 = document.createElement('canvas');
-            c3.width = w3; c3.height = h3;
-            let x3 = c3.getContext('2d');
-
             x1.drawImage(srcCanvas, 0, 0, w1, h1);
             x2.drawImage(c1, 0, 0, w2, h2);
-            x3.drawImage(c2, 0, 0, w3, h3);
 
             // Stretch back to full size
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(c3, 0, 0, width, height);
+            ctx.drawImage(c2, 0, 0, width, height);
         }
+
 
         //  Build scene 
         function buildScene() {
