@@ -14,13 +14,23 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: linear-gradient(to bottom, #1E90FF, #CFE2FF);
+            background-color: white;
+            color-scheme: light dark;
+        }
+
+        @media (prefers-color-scheme: dark) {
+
+            html,
+            body {
+                background-color: black;
+            }
         }
 
         canvas {
             display: block;
             margin: 0 auto;
             margin-top: 60px;
+            background: linear-gradient(to bottom, #1E90FF, #CFE2FF);
         }
     </style>
 </head>
@@ -85,8 +95,8 @@
             centerFloatSpeed: 0.02,
 
             // 画布
-            canvasWidth: 900,
-            canvasHeight: 1200
+            canvasWidth: 600,
+            canvasHeight: 800
         };
 
         let ringCharacters = [];
@@ -94,6 +104,8 @@
         let lastFlyingFrame = 0;
         let isP5Ready = false;
         let pendingText = null;
+        let playState = "playing";
+        let finishedTime = 0;
 
         function setup() {
             let cw = windowWidth;
@@ -132,6 +144,32 @@
             // 茎的底部位置
             textConfig.stemStartX = w * 0.15;
             textConfig.stemStartY = h + 50;
+
+            // 根据画布宽度动态计算缩放比例，原设计基准宽度
+            let scaleFactor = w / textConfig.canvasWidth;
+
+            // 缩放各类视觉参数，确保在手机端（宽 ~430）上不会过大
+            centerDot.radius = 5 * scaleFactor;
+            textConfig.fontSize = 12 * scaleFactor;
+            textConfig.innerLetterSpacing = 8 * scaleFactor;
+            textConfig.outerLetterSpacing = 2 * scaleFactor;
+            textConfig.layerSpacing = 15 * scaleFactor;
+            textConfig.maxLineLength = 80 * scaleFactor;
+            textConfig.charFloatRange = 5 * scaleFactor;
+            textConfig.centerFloatRange = 4 * scaleFactor;
+            textConfig.stemSwing = 30 * scaleFactor;
+
+            // 保证线条有最低粗细
+            textConfig.lineWeight = Math.max(0.4 * scaleFactor, 0.1);
+            textConfig.stemWeight = Math.max(1.2 * scaleFactor, 0.5);
+
+            // 速度等比缩放
+            textConfig.initialVelocityX = [-2 * scaleFactor, 5 * scaleFactor];
+            textConfig.initialVelocityY = [-4 * scaleFactor, -1 * scaleFactor];
+
+            if (typeof textSize === "function") {
+                textSize(textConfig.fontSize);
+            }
         }
 
         // gradient background now handled by CSS body background
@@ -341,9 +379,22 @@
             // 茎
             drawStem();
 
-            if (frameCount - lastFlyingFrame > textConfig.flyingTriggerInterval) {
-                spawnFlyingCharacters();
-                lastFlyingFrame = frameCount;
+            if (playState === "playing") {
+                if (frameCount - lastFlyingFrame > textConfig.flyingTriggerInterval) {
+                    spawnFlyingCharacters();
+                    lastFlyingFrame = frameCount;
+                }
+
+                if (ringCharacters.length === 0 && flyingCharacters.length === 0) {
+                    playState = "finished";
+                    finishedTime = millis();
+                }
+            } else if (playState === "finished") {
+                if (millis() - finishedTime > 1000) {
+                    generateRings();
+                    playState = "playing";
+                    lastFlyingFrame = frameCount;
+                }
             }
 
             updateFlying();
@@ -365,6 +416,7 @@
             ringCharacters = [];
             flyingCharacters = [];
             lastFlyingFrame = 0;
+            playState = "playing";
 
             generateRings();
 

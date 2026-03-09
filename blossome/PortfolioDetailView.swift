@@ -8,6 +8,7 @@
 import SwiftUI
 import AVKit
 import PhotosUI
+import Photos
 
 // MARK: - Pure Video Rendering View (no system controls)
 
@@ -250,87 +251,123 @@ private struct PortfolioPageView: View {
 // MARK: - Detail View (Full Screen + Paging)
 
 struct PortfolioDetailView: View {
-    let items: [PortfolioItem]
     let initialIndex: Int
     @EnvironmentObject var portfolioStore: PortfolioStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
-    @State private var scrolledID: PortfolioItem.ID?
     @State private var currentIndex: Int
     
     @State private var dragOffset: CGSize = .zero
     @State private var isDraggingDown = false
+    
+    // ... menu states
+    @State private var showShareSheet = false
+    @State private var showDeleteAlert = false
+    @State private var saveToAlbumMessage: String?
+    @State private var showSaveToast = false
 
-    init(items: [PortfolioItem], initialIndex: Int) {
-        self.items = items
-        self.initialIndex = initialIndex
-        _currentIndex = State(initialValue: initialIndex)
-        _scrolledID = State(initialValue: items[safe: initialIndex]?.id)
+    private var items: [PortfolioItem] {
+        portfolioStore.items
     }
 
-    private var currentItem: PortfolioItem {
-        items[currentIndex]
+    init(initialIndex: Int) {
+        self.initialIndex = initialIndex
+        _currentIndex = State(initialValue: initialIndex)
+    }
+
+    private var currentItem: PortfolioItem? {
+        items[safe: currentIndex]
     }
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color(UIColor.systemBackground).ignoresSafeArea()
 
-            // Paging ScrollView
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        PortfolioPageView(item: item, isCurrentPage: item.id == scrolledID)
-                            .environmentObject(portfolioStore)
-                            .containerRelativeFrame(.horizontal)
-                            .id(item.id)
-                    }
+            // Paging TabView
+            TabView(selection: $currentIndex) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    PortfolioPageView(item: item, isCurrentPage: index == currentIndex)
+                        .environmentObject(portfolioStore)
+                        .tag(index)
                 }
-                .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $scrolledID)
+            .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
 
             // Overlay: top bar + bottom info
             VStack {
                 // Top bar
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 30))
-                            .foregroundColor(.white.opacity(0.8))
-                    }
-
-                    Spacer()
-
+                ZStack {
                     // Page indicator
                     Text("\(currentIndex + 1) / \(items.count)")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundStyle(.secondary)
+                    
+                    HStack {
+                        Button(action: { dismiss() }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+
+                        Spacer()
+
+                        // ... More menu
+                        Menu {
+                            Button {
+                                saveCurrentItemToAlbum()
+                            } label: {
+                                Label("保存到相册", systemImage: "square.and.arrow.down")
+                            }
+                            Button {
+                                showShareSheet = true
+                            } label: {
+                                Label("分享", systemImage: "square.and.arrow.up")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                showDeleteAlert = true
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .frame(width: 32, height: 32)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                    }
                 }
-                .padding()
+                .padding(.horizontal, 16)
+                .frame(height: 44)
 
                 Spacer()
 
                 // Bottom info
-                VStack(spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: currentItem.type == .livePhoto ? "livephoto" : "video.fill")
-                        Text(currentItem.effectName)
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.8), radius: 4, x: 0, y: 2)
+                if let currentItem = currentItem {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: currentItem.type == .livePhoto ? "livephoto" : "video.fill")
+                            Text(currentItem.effectName)
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                        }
+                        .foregroundStyle(.primary)
 
-                    Text(currentItem.createdAt, style: .date)
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.8))
-                        .shadow(color: .black.opacity(0.8), radius: 4, x: 0, y: 2)
+                        Text(currentItem.createdAt, style: .date)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.bottom, 40)
                 }
-                .padding(.bottom, 40)
             }
         }
         .offset(y: dragOffset.height > 0 ? dragOffset.height : 0)
@@ -341,7 +378,12 @@ struct PortfolioDetailView: View {
                     if !isDraggingDown {
                         let isVertical = abs(value.translation.height) > abs(value.translation.width) + 15
                         if isVertical && value.translation.height > 0 {
-                            isDraggingDown = true
+                            let startY = value.startLocation.y
+                            let screenHeight = UIScreen.main.bounds.height
+                            // 标题栏和底部信息区域不响应下滑手势
+                            if startY > 120 && startY < screenHeight - 150 {
+                                isDraggingDown = true
+                            }
                         }
                     }
                     if isDraggingDown && value.translation.height > 0 {
@@ -361,15 +403,102 @@ struct PortfolioDetailView: View {
                     }
                 }
         )
-        .onAppear {
-            // State initialized in init
+        .statusBarHidden()
+        .alert("确认删除", isPresented: $showDeleteAlert) {
+            Button("取消", role: .cancel) { }
+            Button("删除", role: .destructive) {
+                deleteCurrentItem()
+            }
+        } message: {
+            Text("删除后无法恢复，确定要删除这个作品吗？")
         }
-        .onChange(of: scrolledID) { _, newID in
-            if let newID, let idx = items.firstIndex(where: { $0.id == newID }) {
-                currentIndex = idx
+        .sheet(isPresented: $showShareSheet) {
+            if let item = currentItem {
+                let fileURL = portfolioStore.fileURL(for: item)
+                ActivityViewController(activityItems: [fileURL])
+                    .presentationDetents([.medium, .large])
             }
         }
-        .statusBarHidden()
+        .overlay(alignment: .top) {
+            if showSaveToast, let msg = saveToAlbumMessage {
+                Text(msg)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .padding(.top, 60)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    
+    private func saveCurrentItemToAlbum() {
+        guard let item = currentItem else { return }
+        let fileURL = portfolioStore.fileURL(for: item)
+        
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    showToast("需要相册权限才能保存")
+                }
+                return
+            }
+            
+            PHPhotoLibrary.shared().performChanges({
+                if item.type == .livePhoto,
+                   let imageURL = self.portfolioStore.livePhotoImageURL(for: item),
+                   let videoURL = self.portfolioStore.livePhotoVideoURL(for: item) {
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.addResource(with: .photo, fileURL: imageURL, options: nil)
+                    let videoOptions = PHAssetResourceCreationOptions()
+                    videoOptions.shouldMoveFile = false
+                    request.addResource(with: .pairedVideo, fileURL: videoURL, options: videoOptions)
+                } else {
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+                }
+            }) { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        showToast("已保存到相册")
+                    } else {
+                        showToast("保存失败：\(error?.localizedDescription ?? "未知错误")")
+                    }
+                }
+            }
+        }
+    }
+    
+    private func deleteCurrentItem() {
+        guard currentIndex < items.count else { return }
+        let item = items[currentIndex]
+        
+        if items.count == 1 {
+            // 最后一个，删除后直接关闭
+            portfolioStore.deleteItem(item)
+            dismiss()
+        } else {
+            // 如果删除的是最后一个位置，先调整索引
+            let newIndex = currentIndex >= items.count - 1 ? items.count - 2 : currentIndex
+            portfolioStore.deleteItem(item)
+            currentIndex = min(newIndex, max(0, items.count - 1))
+        }
+    }
+    
+    private func showToast(_ message: String) {
+        saveToAlbumMessage = message
+        withAnimation(.spring(response: 0.3)) {
+            showSaveToast = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.spring(response: 0.3)) {
+                showSaveToast = false
+            }
+        }
     }
 }
 
@@ -378,4 +507,20 @@ private extension Array {
         guard indices.contains(index) else { return nil }
         return self[index]
     }
+}
+
+// MARK: - UIActivityViewController Wrapper
+
+struct ActivityViewController: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

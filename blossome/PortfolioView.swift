@@ -47,7 +47,7 @@ struct PortfolioView: View {
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $selectedItem) { item in
             if let index = portfolioStore.items.firstIndex(where: { $0.id == item.id }) {
-                PortfolioDetailView(items: portfolioStore.items, initialIndex: index)
+                PortfolioDetailView(initialIndex: index)
                     .environmentObject(portfolioStore)
             }
         }
@@ -63,7 +63,9 @@ struct PortfolioView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(height: 160)
+                        .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.gray.opacity(0.3))
