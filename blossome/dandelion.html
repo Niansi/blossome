@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>蒲公英的约定</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #1E90FF, #CFE2FF);
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            margin-top: 60px;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        // 文字
+        let textField = "";
+
+        // 中心点
+        let centerDot = {
+            x: 270,
+            y: 300,
+            currentX: 270,
+            currentY: 300,
+            radius: 5,
+            color: "#FFFFFF"
+        };
+
+        // 参数
+        let textConfig = {
+            bgGradientStart: "#1E90FF",   // 顶部蓝色
+            bgGradientEnd: "#CFE2FF",     // 底部浅蓝
+            gradientStartY: 0,
+            gradientEndY: 800,
+
+            fontSize: 12,
+            fillColor: "#FFFFFF",
+
+            innerLetterSpacing: 8,
+            outerLetterSpacing: 2,
+
+            layerSpacing: 15,
+            maxLayers: 10,
+
+            lineColor: "#FFFFFF",
+            lineWeight: 0.4,
+
+            initialVelocityX: [-2, 5],
+            initialVelocityY: [-4, -1],
+
+            maxLineLength: 80,
+
+            flyingTriggerInterval: 2,
+            flyingCountMin: 2,
+            flyingCountMax: 5,
+
+            charFloatRange: 5,          // 漂移最大像素
+            charFloatSpeed: [0.02, 0.05], // 漂移速度范围
+
+            // 茎
+            stemColor: "#FFFFFF",
+            stemWeight: 1.2,
+
+            stemStartX: 80, // 茎底部位置x
+            stemStartY: 850, // 茎底部位置y
+
+            stemSwing: 30,
+            stemSwingSpeed: 0.02,
+
+            centerFloatRange: 4,
+            centerFloatSpeed: 0.02,
+
+            // 画布
+            canvasWidth: 900,
+            canvasHeight: 1200
+        };
+
+        let ringCharacters = [];
+        let flyingCharacters = [];
+        let lastFlyingFrame = 0;
+        let isP5Ready = false;
+        let pendingText = null;
+
+        function setup() {
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            createCanvas(cw, ch);
+
+            updateLayout(width, height);
+
+            textAlign(CENTER, CENTER);
+            textSize(textConfig.fontSize);
+
+            isP5Ready = true;
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.p5Ready) {
+                window.webkit.messageHandlers.p5Ready.postMessage('ready');
+            }
+
+            if (pendingText !== null) {
+                doStartArt(pendingText);
+                pendingText = null;
+            }
+        }
+
+        function updateLayout(w, h) {
+            textConfig.canvasWidth = w;
+            textConfig.canvasHeight = h;
+            textConfig.gradientEndY = h;
+
+            // 动态中心点，稍偏左
+            centerDot.x = w * 0.45;
+            centerDot.y = h * 0.375;
+            centerDot.currentX = centerDot.x;
+            centerDot.currentY = centerDot.y;
+
+            // 茎的底部位置
+            textConfig.stemStartX = w * 0.15;
+            textConfig.stemStartY = h + 50;
+        }
+
+        // gradient background now handled by CSS body background
+
+        function generateRings() {
+            if (!textField || textField.length === 0) return;
+
+            let index = 0;
+
+            for (let layer = 0; layer < textConfig.maxLayers; layer++) {
+                let radius = (layer + 1) * textConfig.layerSpacing;
+                let angle = 0;
+                let spacing = map(layer, 0, textConfig.maxLayers,
+                    textConfig.innerLetterSpacing,
+                    textConfig.outerLetterSpacing
+                );
+
+                while (angle < TWO_PI) {
+                    let x = centerDot.x + cos(angle) * radius;
+                    let y = centerDot.y + sin(angle) * radius;
+
+                    ringCharacters.push({
+                        char: textField[index % textField.length],
+                        x: x,
+                        y: y,
+                        angle: angle,
+                        radius: radius,
+                        layer: layer,
+
+                        floatSeed: random(1000),
+                        floatSpeed: random(
+                            textConfig.charFloatSpeed[0],
+                            textConfig.charFloatSpeed[1]
+                        )
+                    });
+                    angle += radians(spacing);
+                    index++;
+                }
+            }
+        }
+
+        function spawnFlyingCharacters() {
+            let count = floor(random(
+                textConfig.flyingCountMin,
+                textConfig.flyingCountMax
+            ));
+
+            for (let i = 0; i < count; i++) {
+                if (ringCharacters.length === 0) return;
+
+                let id = floor(random(ringCharacters.length));
+                let base = ringCharacters[id];
+
+                flyingCharacters.push({
+                    char: base.char,
+                    x: base.x,
+                    y: base.y,
+
+                    vx: random(textConfig.initialVelocityX[0], textConfig.initialVelocityX[1]),
+                    vy: random(textConfig.initialVelocityY[0], textConfig.initialVelocityY[1]),
+
+                    tailX: base.x,
+                    tailY: base.y
+                });
+
+                ringCharacters.splice(id, 1);
+            }
+        }
+
+        function updateFlying() {
+            for (let c of flyingCharacters) {
+                c.tailX += (c.x - c.tailX) * 0.08;
+                c.tailY += (c.y - c.tailY) * 0.08;
+
+                c.x += c.vx;
+                c.y += c.vy;
+
+                // 微风摆动
+                c.x += sin(frameCount * 0.05 + c.y) * 0.1;
+            }
+        }
+
+        function drawRingCharacters() {
+            // Update positions
+            for (let c of ringCharacters) {
+                let baseX = centerDot.currentX + cos(c.angle) * c.radius;
+                let baseY = centerDot.currentY + sin(c.angle) * c.radius;
+
+                // 漂移偏移
+                let offsetX =
+                    sin(frameCount * c.floatSpeed + c.floatSeed) *
+                    textConfig.charFloatRange;
+
+                let offsetY =
+                    cos(frameCount * c.floatSpeed + c.floatSeed) *
+                    textConfig.charFloatRange;
+
+                c.x = baseX + offsetX;
+                c.y = baseY + offsetY;
+            }
+
+            // Draw all lines together to avoid state thrashing
+            stroke(textConfig.lineColor);
+            strokeWeight(textConfig.lineWeight);
+            for (let c of ringCharacters) {
+                line(centerDot.currentX, centerDot.currentY, c.x, c.y);
+            }
+
+            // Draw all texts together
+            noStroke();
+            fill(textConfig.fillColor);
+            for (let c of ringCharacters) {
+                push();
+                translate(c.x, c.y);
+                rotate(c.angle + HALF_PI);
+                text(c.char, 0, 0);
+                pop();
+            }
+        }
+
+        function drawFlyingCharacters() {
+            // Update tail positions and clean up
+            for (let i = flyingCharacters.length - 1; i >= 0; i--) {
+                let c = flyingCharacters[i];
+
+                let dx = c.x - c.tailX;
+                let dy = c.y - c.tailY;
+                let d = dist(c.x, c.y, c.tailX, c.tailY);
+
+                if (d > textConfig.maxLineLength) {
+                    let ratio = textConfig.maxLineLength / d;
+                    c.tailX = c.x - dx * ratio;
+                    c.tailY = c.y - dy * ratio;
+                }
+
+                // Clean up characters that fly far off screen
+                if (c.x < -200 || c.x > width + 200 || c.y < -200 || c.y > height + 200) {
+                    flyingCharacters.splice(i, 1);
+                }
+            }
+
+            // Draw all lines together
+            stroke(textConfig.lineColor);
+            strokeWeight(textConfig.lineWeight);
+            for (let c of flyingCharacters) {
+                line(c.x, c.y, c.tailX, c.tailY);
+            }
+
+            // Draw all texts together
+            noStroke();
+            fill(textConfig.fillColor);
+            for (let c of flyingCharacters) {
+                push();
+                translate(c.x, c.y);
+                rotate(atan2(c.vy, c.vx) + HALF_PI);
+                text(c.char, 0, 0);
+                pop();
+            }
+        }
+
+        function drawStem() {
+            stroke(textConfig.stemColor);
+            strokeWeight(textConfig.stemWeight);
+            noFill();
+
+            let sway =
+                sin(frameCount * textConfig.stemSwingSpeed) *
+                textConfig.stemSwing;
+
+            let controlX =
+                (centerDot.currentX + textConfig.stemStartX) / 2 + sway;
+
+            let controlY =
+                (centerDot.currentY + textConfig.stemStartY) / 2;
+
+            beginShape();
+            vertex(textConfig.stemStartX, textConfig.stemStartY);
+            quadraticVertex(
+                controlX,
+                controlY,
+                centerDot.currentX,
+                centerDot.currentY
+            );
+            endShape();
+        }
+
+        function drawCenter() {
+            noStroke();
+            fill(centerDot.color);
+            circle(centerDot.currentX, centerDot.currentY, centerDot.radius);
+        }
+
+        function draw() {
+            clear();
+
+            // 圆心轻微晃动
+            centerDot.currentX =
+                centerDot.x +
+                sin(frameCount * textConfig.centerFloatSpeed) *
+                textConfig.centerFloatRange;
+
+            centerDot.currentY =
+                centerDot.y +
+                cos(frameCount * textConfig.centerFloatSpeed) *
+                textConfig.centerFloatRange;
+
+            // 茎
+            drawStem();
+
+            if (frameCount - lastFlyingFrame > textConfig.flyingTriggerInterval) {
+                spawnFlyingCharacters();
+                lastFlyingFrame = frameCount;
+            }
+
+            updateFlying();
+
+            drawRingCharacters();
+            drawFlyingCharacters();
+
+            drawCenter();
+        }
+
+        function doStartArt(text) {
+            // Remove spaces and newlines if desired, or keep as is.
+            // The original user prompt had "Throughthestormysea穿过风浪的海" which implies spaces might be there.
+            textField = text.replace(/[\s\n]+/g, '');
+            if (textField.length === 0) {
+                textField = "蒲公英的约定"; // fallback
+            }
+
+            ringCharacters = [];
+            flyingCharacters = [];
+            lastFlyingFrame = 0;
+
+            generateRings();
+
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.textRendered) {
+                window.webkit.messageHandlers.textRendered.postMessage('done');
+            }
+        }
+
+        function startArt(text, font) {
+            if (!isP5Ready) {
+                pendingText = text;
+                return;
+            }
+            // For dandelion, we ignore the font param and just use system font as requested.
+            // We've already set simple sans-serif/system by default because no @font-face is applied.
+            doStartArt(text);
+        }
+
+        function windowResized() {
+            let cw = windowWidth;
+            let ch = cw * 4 / 3;
+            let availH = windowHeight - 60;
+            if (ch > availH) { ch = availH; cw = ch * 3 / 4; }
+            resizeCanvas(cw, ch);
+            updateLayout(width, height);
+        }
+
+        function mousePressed() {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action) {
+                window.webkit.messageHandlers.action.postMessage('showActionSheet');
+            }
+        }
+
+        function startRecording() {
+            // No specific reset needed for this continuous animation
+        }
+    </script>
+</body>
+
+</html>

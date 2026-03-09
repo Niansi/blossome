@@ -35,22 +35,23 @@ struct PureVideoView: UIViewRepresentable {
 struct LivePhotoUIView: UIViewRepresentable {
     let imageURL: URL
     let videoURL: URL
+    var isCurrentPage: Bool
 
     func makeUIView(context: Context) -> PHLivePhotoView {
         let view = PHLivePhotoView()
         view.contentMode = .scaleAspectFit
-        view.delegate = context.coordinator
+        view.clipsToBounds = true
         return view
     }
 
     func updateUIView(_ uiView: PHLivePhotoView, context: Context) {
         if uiView.livePhoto == nil {
             loadLivePhoto(into: uiView)
+        } else {
+            if !isCurrentPage {
+                uiView.stopPlayback()
+            }
         }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
     }
 
     private func loadLivePhoto(into view: PHLivePhotoView) {
@@ -60,21 +61,14 @@ struct LivePhotoUIView: UIViewRepresentable {
             targetSize: .zero,
             contentMode: .default
         ) { livePhoto, info in
-            let isDegraded = (info[PHLivePhotoInfoIsDegradedKey] as? Bool) ?? false
             if let livePhoto = livePhoto {
                 DispatchQueue.main.async {
                     view.livePhoto = livePhoto
-                    if !isDegraded {
-                        view.startPlayback(with: .full)
+                    if !self.isCurrentPage {
+                        view.stopPlayback()
                     }
                 }
             }
-        }
-    }
-
-    class Coordinator: NSObject, PHLivePhotoViewDelegate {
-        func livePhotoView(_ livePhotoView: PHLivePhotoView, didEndPlaybackWith playbackStyle: PHLivePhotoViewPlaybackStyle) {
-            livePhotoView.startPlayback(with: .full)
         }
     }
 }
@@ -112,11 +106,11 @@ private struct PortfolioPageView: View {
             }
         }
         .onDisappear {
-            deactivatePlayer()
+            destroyPlayer()
         }
         .onChange(of: item.id) { _, _ in
             // Defensive: ensure reused page views don't keep stale AVPlayer state.
-            deactivatePlayer()
+            destroyPlayer()
             preparePlayer()
             if isCurrentPage {
                 player?.play()
@@ -152,13 +146,19 @@ private struct PortfolioPageView: View {
     }
 
     private func deactivatePlayer() {
+        player?.pause()
+        player?.seek(to: .zero)
+        isPlaying = false
+    }
+
+    private func destroyPlayer() {
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
             loopObserver = nil
         }
         player?.pause()
         player = nil
-        isPlaying = true
+        isPlaying = false
     }
 
     @ViewBuilder
@@ -191,9 +191,11 @@ private struct PortfolioPageView: View {
     private var livePhotoContent: some View {
         if let imageURL = portfolioStore.livePhotoImageURL(for: item),
            let videoURL = portfolioStore.livePhotoVideoURL(for: item),
-           FileManager.default.fileExists(atPath: imageURL.path),
+           let imageSize = UIImage(contentsOfFile: imageURL.path)?.size,
            FileManager.default.fileExists(atPath: videoURL.path) {
-            LivePhotoUIView(imageURL: imageURL, videoURL: videoURL)
+            LivePhotoUIView(imageURL: imageURL, videoURL: videoURL, isCurrentPage: isCurrentPage)
+                .aspectRatio(imageSize, contentMode: .fit)
+                .clipped()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
         } else {
@@ -254,7 +256,17 @@ struct PortfolioDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var scrolledID: PortfolioItem.ID?
-    @State private var currentIndex: Int = 0
+    @State private var currentIndex: Int
+    
+    @State private var dragOffset: CGSize = .zero
+    @State private var isDraggingDown = false
+
+    init(items: [PortfolioItem], initialIndex: Int) {
+        self.items = items
+        self.initialIndex = initialIndex
+        _currentIndex = State(initialValue: initialIndex)
+        _scrolledID = State(initialValue: items[safe: initialIndex]?.id)
+    }
 
     private var currentItem: PortfolioItem {
         items[currentIndex]
@@ -321,9 +333,36 @@ struct PortfolioDetailView: View {
                 .padding(.bottom, 40)
             }
         }
+        .offset(y: dragOffset.height > 0 ? dragOffset.height : 0)
+        .opacity(1.0 - Double(max(0, dragOffset.height) / max(1, UIScreen.main.bounds.height)))
+        .simultaneousGesture(
+            DragGesture()
+                .onChanged { value in
+                    if !isDraggingDown {
+                        let isVertical = abs(value.translation.height) > abs(value.translation.width) + 15
+                        if isVertical && value.translation.height > 0 {
+                            isDraggingDown = true
+                        }
+                    }
+                    if isDraggingDown && value.translation.height > 0 {
+                        dragOffset = value.translation
+                    }
+                }
+                .onEnded { value in
+                    if isDraggingDown {
+                        if dragOffset.height > 150 || value.velocity.height > 500 {
+                            dismiss()
+                        } else {
+                            withAnimation(.spring()) {
+                                dragOffset = .zero
+                            }
+                        }
+                        isDraggingDown = false
+                    }
+                }
+        )
         .onAppear {
-            currentIndex = initialIndex
-            scrolledID = items[safe: initialIndex]?.id
+            // State initialized in init
         }
         .onChange(of: scrolledID) { _, newID in
             if let newID, let idx = items.firstIndex(where: { $0.id == newID }) {

@@ -11,6 +11,7 @@ enum ArtEffect: String, Identifiable {
     case sketch
     case mcdonald
     case rainynight
+    case dandelion
 
     var id: String { rawValue }
 
@@ -21,6 +22,7 @@ enum ArtEffect: String, Identifiable {
         case .sketch: return "LXGWWenKai-Light"
         case .mcdonald: return "McDonaldsFriesFont"
         case .rainynight: return "LXGWWenKai-Light"
+        case .dandelion: return "System"
         }
     }
 
@@ -29,6 +31,7 @@ enum ArtEffect: String, Identifiable {
         case .sketch: return "音乐的诞生"
         case .mcdonald: return "麦门"
         case .rainynight: return "潮湿的雨夜"
+        case .dandelion: return "蒲公英的约定"
         }
     }
 }
@@ -88,6 +91,11 @@ struct ContentView: View {
                     } label: {
                         Label("潮湿的雨夜", systemImage: "cloud.rain")
                     }
+                    Button {
+                        openArtEffect(.dandelion)
+                    } label: {
+                        Label("蒲公英的约定", systemImage: "wind")
+                    }
                 } label: {
                     Text("Art").bold()
                         .foregroundStyle(.primary)
@@ -135,49 +143,6 @@ struct ContentView: View {
                     webViewManager: webViewManager,
                     onActionRequested: {
                         showingActionSheet = true
-                    },
-                    onVideoGenerated: { base64 in
-                        let effectName = effect.displayName
-                        let itemType: PortfolioItemType = isLivePhotoRecording ? .livePhoto : .video
-
-                        if isLivePhotoRecording {
-                            MediaSaver.shared.saveLivePhoto(base64String: base64) { success, error in
-                                print("LivePhoto saved: \(success), error: \(error?.localizedDescription ?? "none")")
-                                if success {
-                                    portfolioStore.saveLivePhotoToPortfolio(base64String: base64, effectName: effectName) { item in
-                                        if let item = item {
-                                            savedPortfolioItem = item
-                                            fluidProgressState = .success
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                                                isRecording = false
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    fluidProgressState = .error(error?.localizedDescription ?? "保存失败")
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { isRecording = false }
-                                }
-                            }
-                            isLivePhotoRecording = false
-                        } else {
-                            MediaSaver.shared.saveVideo(base64String: base64) { success, error in
-                                print("Video saved: \(success)")
-                                if success {
-                                    portfolioStore.saveToPortfolio(base64String: base64, effectName: effectName, type: itemType) { item in
-                                        if let item = item {
-                                            savedPortfolioItem = item
-                                            fluidProgressState = .success
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                                                isRecording = false
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    fluidProgressState = .error(error?.localizedDescription ?? "保存失败")
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { isRecording = false }
-                                }
-                            }
-                        }
                     },
                     onTextRendered: {
                         withAnimation(.easeOut(duration: 0.3)) {
@@ -351,10 +316,58 @@ struct ContentView: View {
         let mediaType: MediaType = forLivePhoto ? .livePhoto : .video
         fluidProgressState = .processing(type: mediaType, estimatedDuration: recordDuration)
 
+        guard let webView = webViewManager.webView, let effect = activeArtEffect else {
+            isRecording = false
+            fluidProgressState = .error("无法获取画布")
+            return
+        }
+        
+        // Trigger any JS preparation hooks (e.g. rainynight scene reset)
         webViewManager.startRecording()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + recordDuration) {
-            webViewManager.stopRecording()
+        MediaSaver.shared.startRecording(webView: webView, duration: recordDuration, forLivePhoto: forLivePhoto, effectName: effect.displayName) { videoURL, imageURL, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self.fluidProgressState = .error(error.localizedDescription)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self.isRecording = false }
+                    return
+                }
+                
+                guard let videoURL = videoURL else {
+                    self.fluidProgressState = .error("视频获取失败")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self.isRecording = false }
+                    return
+                }
+
+                if forLivePhoto {
+                    guard let imageURL = imageURL else {
+                        self.fluidProgressState = .error("封面获取失败")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self.isRecording = false }
+                        return
+                    }
+                    
+                    PortfolioStore.shared.saveLivePhotoToPortfolio(videoURL: videoURL, imageURL: imageURL, effectName: effect.displayName) { item in
+                        if let item = item {
+                            self.savedPortfolioItem = item
+                            self.fluidProgressState = .success
+                        } else {
+                            self.fluidProgressState = .error("保存到作品集失败")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self.isRecording = false; self.isLivePhotoRecording = false }
+                    }
+                } else {
+                    let portfolioType: PortfolioItemType = forLivePhoto ? .livePhoto : .video
+                    PortfolioStore.shared.saveToPortfolio(videoURL: videoURL, effectName: effect.displayName, type: portfolioType) { item in
+                        if let item = item {
+                            self.savedPortfolioItem = item
+                            self.fluidProgressState = .success
+                        } else {
+                            self.fluidProgressState = .error("保存到作品集失败")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self.isRecording = false }
+                    }
+                }
+            }
         }
     }
 }

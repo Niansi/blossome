@@ -14,7 +14,6 @@ struct P5WebView: UIViewRepresentable {
 
     // Callbacks to parent
     var onActionRequested: () -> Void
-    var onVideoGenerated: (String) -> Void
     var onTextRendered: () -> Void
 
     func makeUIView(context: Context) -> WKWebView {
@@ -27,7 +26,6 @@ struct P5WebView: UIViewRepresentable {
 
         // Add message handlers
         config.userContentController.add(context.coordinator, name: "action")
-        config.userContentController.add(context.coordinator, name: "videoCallback")
         config.userContentController.add(context.coordinator, name: "p5Ready")
         config.userContentController.add(context.coordinator, name: "textRendered")
 
@@ -89,10 +87,6 @@ struct P5WebView: UIViewRepresentable {
             } else if message.name == "action" {
                 if let msg = message.body as? String, msg == "showActionSheet" {
                     parent.onActionRequested()
-                }
-            } else if message.name == "videoCallback" {
-                if let base64Data = message.body as? String {
-                    parent.onVideoGenerated(base64Data)
                 }
             } else if message.name == "textRendered" {
                 parent.onTextRendered()

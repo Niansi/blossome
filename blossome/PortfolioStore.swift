@@ -29,30 +29,22 @@ class PortfolioStore: ObservableObject {
 
     // MARK: - Public
 
-    func saveToPortfolio(base64String: String, effectName: String, type: PortfolioItemType, completion: @escaping (PortfolioItem?) -> Void) {
-        let parts = base64String.components(separatedBy: "base64,")
-        let base64Data = parts.count > 1 ? parts[1] : base64String
-
-        guard let data = Data(base64Encoded: base64Data, options: .ignoreUnknownCharacters) else {
-            completion(nil)
-            return
-        }
-
+    func saveToPortfolio(videoURL: URL, effectName: String, type: PortfolioItemType, completion: @escaping (PortfolioItem?) -> Void) {
         let id = UUID()
-        let videoFileName = "\(id.uuidString).mp4"
+        let videoFileName = "\(id.uuidString).mov"
         let thumbFileName = "\(id.uuidString)_thumb.jpg"
-        let videoURL = portfolioDir.appendingPathComponent(videoFileName)
+        let destVideoURL = portfolioDir.appendingPathComponent(videoFileName)
         let thumbURL = portfolioDir.appendingPathComponent(thumbFileName)
 
         do {
-            try data.write(to: videoURL)
+            try FileManager.default.copyItem(at: videoURL, to: destVideoURL)
         } catch {
-            print("[Portfolio] Failed to write video: \(error)")
+            print("[Portfolio] Failed to copy video: \(error)")
             completion(nil)
             return
         }
 
-        generateThumbnail(from: videoURL, to: thumbURL) { success in
+        generateThumbnail(from: destVideoURL, to: thumbURL) { success in
             let item = PortfolioItem(type: type, fileName: videoFileName, thumbnailFileName: thumbFileName, effectName: effectName)
 
             DispatchQueue.main.async {
@@ -63,116 +55,43 @@ class PortfolioStore: ObservableObject {
         }
     }
 
-    func saveLivePhotoToPortfolio(base64String: String, effectName: String, completion: @escaping (PortfolioItem?) -> Void) {
-        let parts = base64String.components(separatedBy: "base64,")
-        let base64Data = parts.count > 1 ? parts[1] : base64String
-
-        guard let data = Data(base64Encoded: base64Data, options: .ignoreUnknownCharacters) else {
-            completion(nil)
-            return
-        }
-
+    func saveLivePhotoToPortfolio(videoURL: URL, imageURL: URL, effectName: String, completion: @escaping (PortfolioItem?) -> Void) {
         let id = UUID()
-        let rawVideoFileName = "\(id.uuidString).mp4"
+        let rawVideoFileName = "\(id.uuidString).mov"
         let thumbFileName = "\(id.uuidString)_thumb.jpg"
         let liveImageFileName = "\(id.uuidString)_live.jpg"
         let liveVideoFileName = "\(id.uuidString)_live.mov"
 
-        let rawVideoURL = portfolioDir.appendingPathComponent(rawVideoFileName)
+        let destVideoURL = portfolioDir.appendingPathComponent(rawVideoFileName)
         let thumbURL = portfolioDir.appendingPathComponent(thumbFileName)
-        let liveImageURL = portfolioDir.appendingPathComponent(liveImageFileName)
-        let liveVideoURL = portfolioDir.appendingPathComponent(liveVideoFileName)
+        let destLiveImageURL = portfolioDir.appendingPathComponent(liveImageFileName)
+        let destLiveVideoURL = portfolioDir.appendingPathComponent(liveVideoFileName)
 
         do {
-            try data.write(to: rawVideoURL)
+            try FileManager.default.copyItem(at: videoURL, to: destVideoURL)
+            try FileManager.default.copyItem(at: imageURL, to: destLiveImageURL)
+            try FileManager.default.copyItem(at: videoURL, to: destLiveVideoURL)
         } catch {
-            print("[Portfolio] Failed to write video: \(error)")
+            print("[Portfolio] Failed to copy LivePhoto resources: \(error)")
             completion(nil)
             return
         }
 
-        let assetIdentifier = UUID().uuidString
+        generateThumbnail(from: destVideoURL, to: thumbURL) { [weak self] _ in
+            guard let self = self else { return }
+            let item = PortfolioItem(
+                type: .livePhoto,
+                fileName: rawVideoFileName,
+                thumbnailFileName: thumbFileName,
+                effectName: effectName,
+                livePhotoImageFileName: liveImageFileName,
+                livePhotoVideoFileName: liveVideoFileName
+            )
 
-        Task {
-            // Transcode raw video to .mov
-            let rawAsset = AVURLAsset(url: rawVideoURL)
-            let transcodedURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
-
-            guard let exportSession = AVAssetExportSession(asset: rawAsset, presetName: AVAssetExportPresetHighestQuality) else {
-                print("[Portfolio] Failed to create export session")
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-            exportSession.outputURL = transcodedURL
-            exportSession.outputFileType = .mov
-            await exportSession.export()
-
-            guard exportSession.status == .completed else {
-                print("[Portfolio] Transcode failed: \(exportSession.error?.localizedDescription ?? "unknown")")
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
-
-            // Extract key frame for LivePhoto image
-            let transcodedAsset = AVURLAsset(url: transcodedURL)
-            let generator = AVAssetImageGenerator(asset: transcodedAsset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
-
-            do {
-                let duration = try await transcodedAsset.load(.duration)
-                let midTime = CMTimeMultiplyByFloat64(duration, multiplier: 0.5)
-                let (cgImage, _) = try await generator.image(at: midTime)
-
-                // Write JPEG with MakerNote (LivePhoto asset identifier)
-                guard let imageDestination = CGImageDestinationCreateWithURL(liveImageURL as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
-                    print("[Portfolio] Failed to create image destination")
-                    DispatchQueue.main.async { completion(nil) }
-                    return
-                }
-                let makerAppleDictionary: [String: Any] = ["17": assetIdentifier]
-                let metadata: [String: Any] = [kCGImagePropertyMakerAppleDictionary as String: makerAppleDictionary]
-                CGImageDestinationAddImage(imageDestination, cgImage, metadata as CFDictionary)
-                guard CGImageDestinationFinalize(imageDestination) else {
-                    print("[Portfolio] Failed to finalize LivePhoto image")
-                    DispatchQueue.main.async { completion(nil) }
-                    return
-                }
-
-                // Inject ContentIdentifier metadata into video
-                LivePhotoVideoWriter.addMetadataViaExportSession(to: transcodedURL, outputURL: liveVideoURL, assetIdentifier: assetIdentifier) { [weak self] error in
-                    guard let self = self else { return }
-                    if let error = error {
-                        print("[Portfolio] LivePhoto video metadata injection failed: \(error)")
-                        DispatchQueue.main.async { completion(nil) }
-                        return
-                    }
-
-                    // Generate thumbnail
-                    self.generateThumbnail(from: rawVideoURL, to: thumbURL) { _ in
-                        let item = PortfolioItem(
-                            type: .livePhoto,
-                            fileName: rawVideoFileName,
-                            thumbnailFileName: thumbFileName,
-                            effectName: effectName,
-                            livePhotoImageFileName: liveImageFileName,
-                            livePhotoVideoFileName: liveVideoFileName
-                        )
-
-                        DispatchQueue.main.async {
-                            self.items.insert(item, at: 0)
-                            self.saveManifest()
-                            completion(item)
-                        }
-                    }
-
-                    // Clean up temp transcoded file
-                    try? FileManager.default.removeItem(at: transcodedURL)
-                }
-            } catch {
-                print("[Portfolio] Failed to generate LivePhoto key frame: \(error)")
-                DispatchQueue.main.async { completion(nil) }
+            DispatchQueue.main.async {
+                self.items.insert(item, at: 0)
+                self.saveManifest()
+                completion(item)
             }
         }
     }

@@ -232,53 +232,8 @@
             }
         }
 
-        // --- 录制导出相关 ---
-        let mediaRecorder;
-        let recordedChunks = [];
-
         function startRecording() {
-            recordedChunks = [];
-            const canvas = document.querySelector('canvas');
-            // 提升抓取帧率为60
-            const stream = canvas.captureStream(60);
-
-            // 增加码率保证高帧率下的清晰度
-            let options = { mimeType: 'video/mp4', videoBitsPerSecond: 5000000 };
-            if (typeof MediaRecorder !== 'undefined') {
-                if (!MediaRecorder.isTypeSupported('video/mp4')) {
-                    options = { mimeType: 'video/webm', videoBitsPerSecond: 5000000 };
-                }
-                mediaRecorder = new MediaRecorder(stream, options);
-
-                mediaRecorder.ondataavailable = function (e) {
-                    if (e.data.size > 0) {
-                        recordedChunks.push(e.data);
-                    }
-                };
-                mediaRecorder.start();
-            } else {
-                console.error('MediaRecorder API not supported');
-            }
-        }
-
-        // 此方法返回给 Swift
-        function stopRecordingAndGetResult() {
-            if (!mediaRecorder) {
-                return;
-            }
-            mediaRecorder.onstop = function () {
-                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-                const reader = new FileReader();
-                reader.readAsDataURL(blob);
-                reader.onloadend = function () {
-                    const base64data = reader.result;
-                    // 将 base64 传回给 Swift
-                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.videoCallback) {
-                        window.webkit.messageHandlers.videoCallback.postMessage(base64data);
-                    }
-                }
-            };
-            mediaRecorder.stop();
+            // Optional reset logic for recording
         }
     </script>
 </body>
