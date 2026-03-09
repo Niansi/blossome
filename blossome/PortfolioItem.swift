@@ -10,7 +10,7 @@ enum PortfolioItemType: String, Codable {
     case livePhoto
 }
 
-struct PortfolioItem: Identifiable, Codable {
+struct PortfolioItem: Identifiable, Codable, Equatable {
     let id: UUID
     let type: PortfolioItemType
     let fileName: String

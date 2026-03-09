@@ -29,10 +29,33 @@ class MediaSaver: NSObject {
             screenRecorder?.stop()
         }
         
-        screenRecorder = ScreenRecorder()
-        screenRecorder?.start(webView: webView, duration: duration, forLivePhoto: forLivePhoto) { [weak self] video, image, err in
-            completion(video, image, err)
-            self?.screenRecorder = nil
+        let js = """
+        (function() {
+            var canvas = document.querySelector('canvas');
+            if (canvas) {
+                var rect = canvas.getBoundingClientRect();
+                return {x: rect.left, y: rect.top, width: rect.width, height: rect.height};
+            }
+            return null;
+        })();
+        """
+        
+        webView.evaluateJavaScript(js) { [weak self] result, error in
+            var canvasRect: CGRect? = nil
+            if let dict = result as? [String: Any],
+               let x = dict["x"] as? CGFloat,
+               let y = dict["y"] as? CGFloat,
+               let w = dict["width"] as? CGFloat,
+               let h = dict["height"] as? CGFloat {
+                let inset = webView.scrollView.adjustedContentInset
+                canvasRect = CGRect(x: x + inset.left, y: y + inset.top, width: w, height: h)
+            }
+            
+            self?.screenRecorder = ScreenRecorder()
+            self?.screenRecorder?.start(webView: webView, duration: duration, forLivePhoto: forLivePhoto, canvasRect: canvasRect) { video, image, err in
+                completion(video, image, err)
+                self?.screenRecorder = nil
+            }
         }
     }
 }
@@ -42,6 +65,8 @@ class ScreenRecorder {
     var videoURL: URL!
     var isLivePhoto: Bool = false
     var assetIdentifier: String = ""
+    var canvasRect: CGRect?
+    var captureSize: CGSize!
     
     var assetWriter: AVAssetWriter!
     var videoInput: AVAssetWriterInput!
@@ -58,11 +83,12 @@ class ScreenRecorder {
     var hasCapturedKeyframe = false
     var keyframeImage: CGImage?
     
-    func start(webView: WKWebView, duration: TimeInterval, forLivePhoto: Bool, completion: @escaping (URL?, URL?, Error?) -> Void) {
+    func start(webView: WKWebView, duration: TimeInterval, forLivePhoto: Bool, canvasRect: CGRect? = nil, completion: @escaping (URL?, URL?, Error?) -> Void) {
         self.webView = webView
         self.duration = duration
         self.isLivePhoto = forLivePhoto
         self.completion = completion
+        self.canvasRect = canvasRect
         self.assetIdentifier = UUID().uuidString
         
         let fileId = UUID().uuidString
@@ -93,19 +119,24 @@ class ScreenRecorder {
                 assetWriter.metadata = [metadataItem]
             }
             
-            let size = webView.bounds.size
+            let scale = UIScreen.main.scale
+            let targetSize = canvasRect?.size ?? webView.bounds.size
+            let width = Int(targetSize.width * scale) / 2 * 2
+            let height = Int(targetSize.height * scale) / 2 * 2
+            self.captureSize = CGSize(width: CGFloat(width), height: CGFloat(height))
+            
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: size.width * UIScreen.main.scale,
-                AVVideoHeightKey: size.height * UIScreen.main.scale
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
             ]
             videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
             videoInput.expectsMediaDataInRealTime = true
             
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32ARGB),
-                kCVPixelBufferWidthKey as String: size.width * UIScreen.main.scale,
-                kCVPixelBufferHeightKey as String: size.height * UIScreen.main.scale
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
             ]
             bufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: attributes)
             
@@ -131,13 +162,21 @@ class ScreenRecorder {
     }
     
     private func captureFrame(at time: CFTimeInterval) {
-        let size = webView.bounds.size
+        let viewBounds = webView.bounds
+        let size = self.captureSize!
         let scale = UIScreen.main.scale
         let presentationTime = CMTime(seconds: time, preferredTimescale: 600)
         
+        let targetSize = canvasRect?.size ?? viewBounds.size
+        
         // Use drawHierarchy synchronously for WKWebView
-        UIGraphicsBeginImageContextWithOptions(size, false, scale)
-        webView.drawHierarchy(in: webView.bounds, afterScreenUpdates: false)
+        UIGraphicsBeginImageContextWithOptions(targetSize, false, scale)
+        if let context = UIGraphicsGetCurrentContext() {
+            if let rect = canvasRect {
+                context.translateBy(x: -rect.origin.x, y: -rect.origin.y)
+            }
+            webView.drawHierarchy(in: viewBounds, afterScreenUpdates: false)
+        }
         let image = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
         
@@ -149,7 +188,7 @@ class ScreenRecorder {
         } // We capture keyframe directly in memory (Single Pass Export)
         
         if videoInput.isReadyForMoreMediaData {
-            if let pixelBuffer = pixelBufferFromCGImage(cgImage: cgImage, size: CGSize(width: size.width * scale, height: size.height * scale)) {
+            if let pixelBuffer = pixelBufferFromCGImage(cgImage: cgImage, size: size) {
                 bufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
             }
         }

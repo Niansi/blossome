@@ -40,6 +40,7 @@ struct PortfolioView: View {
                         }
                     }
                     .padding()
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: portfolioStore.items)
                 }
             }
         }
