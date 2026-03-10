@@ -40,17 +40,19 @@ struct FragmentListView: View {
                 }
 
                 // 浮动新建按钮
-                Button {
-                    let newFragment = fragmentStore.create()
-                    selectedFragmentID = newFragment.id
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 60, height: 60)
+                GlassEffectContainer {
+                    Button {
+                        let newFragment = fragmentStore.create()
+                        selectedFragmentID = newFragment.id
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 60, height: 60)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                 }
-                .buttonStyle(.glass)
-                .clipShape(Circle())
                 .padding(.trailing, 20)
                 .padding(.bottom, 24)
             }

@@ -73,6 +73,10 @@ class ScreenRecorder {
     var bufferAdaptor: AVAssetWriterInputPixelBufferAdaptor!
     var displayLink: CADisplayLink!
     
+    // StillImageTime metadata track (required for Live Photo)
+    var metadataInput: AVAssetWriterInput?
+    var metadataAdaptor: AVAssetWriterInputMetadataAdaptor?
+    
     var startTime: CFTimeInterval = 0
     var duration: TimeInterval = 0
     
@@ -82,6 +86,7 @@ class ScreenRecorder {
     var imageURL: URL?
     var hasCapturedKeyframe = false
     var keyframeImage: CGImage?
+    var keyframeTime: CMTime?
     
     func start(webView: WKWebView, duration: TimeInterval, forLivePhoto: Bool, canvasRect: CGRect? = nil, completion: @escaping (URL?, URL?, Error?) -> Void) {
         self.webView = webView
@@ -110,7 +115,7 @@ class ScreenRecorder {
         do {
             assetWriter = try AVAssetWriter(outputURL: videoURL, fileType: .mov)
             
-            // Scheme C: Inject Metadata dynamically on writing (Single Pass)
+            // Inject Content Identifier metadata (pairs MOV with JPEG)
             if isLivePhoto {
                 let metadataItem = AVMutableMetadataItem()
                 metadataItem.identifier = .quickTimeMetadataContentIdentifier
@@ -141,12 +146,46 @@ class ScreenRecorder {
             bufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: attributes)
             
             assetWriter.add(videoInput)
+            
+            // Add StillImageTime timed metadata track (required for Live Photo)
+            if isLivePhoto {
+                setupStillImageTimeMetadataTrack()
+            }
+            
             assetWriter.startWriting()
             assetWriter.startSession(atSourceTime: .zero)
             
         } catch {
             completion?(nil, nil, error)
         }
+    }
+    
+    private func setupStillImageTimeMetadataTrack() {
+        // Create format description for com.apple.quicktime.still-image-time
+        let identifier = "mdta/com.apple.quicktime.still-image-time"
+        let spec: NSDictionary = [
+            kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier: identifier,
+            kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType: kCMMetadataBaseDataType_SInt8 as String
+        ]
+        
+        var formatDescription: CMFormatDescription?
+        CMMetadataFormatDescriptionCreateWithMetadataSpecifications(
+            allocator: kCFAllocatorDefault,
+            metadataType: kCMMetadataFormatType_Boxed,
+            metadataSpecifications: [spec] as CFArray,
+            formatDescriptionOut: &formatDescription
+        )
+        
+        guard let desc = formatDescription else { return }
+        
+        let input = AVAssetWriterInput(mediaType: .metadata, outputSettings: nil, sourceFormatHint: desc)
+        input.expectsMediaDataInRealTime = true
+        
+        let adaptor = AVAssetWriterInputMetadataAdaptor(assetWriterInput: input)
+        
+        assetWriter.add(input)
+        metadataInput = input
+        metadataAdaptor = adaptor
     }
     
     @objc private func tick() {
@@ -185,13 +224,36 @@ class ScreenRecorder {
         if isLivePhoto && !hasCapturedKeyframe && time >= duration * 0.5 {
             hasCapturedKeyframe = true
             keyframeImage = cgImage
-        } // We capture keyframe directly in memory (Single Pass Export)
+            keyframeTime = presentationTime
+            
+            // Write StillImageTime metadata at this exact time
+            writeStillImageTimeMetadata(at: presentationTime)
+        }
         
         if videoInput.isReadyForMoreMediaData {
             if let pixelBuffer = pixelBufferFromCGImage(cgImage: cgImage, size: size) {
                 bufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
             }
         }
+    }
+    private func writeStillImageTimeMetadata(at time: CMTime) {
+        guard let adaptor = metadataAdaptor,
+              let input = metadataInput,
+              input.isReadyForMoreMediaData else { return }
+        
+        let item = AVMutableMetadataItem()
+        item.identifier = AVMetadataIdentifier(rawValue: "mdta/com.apple.quicktime.still-image-time")
+        item.keySpace = .quickTimeMetadata
+        item.key = "com.apple.quicktime.still-image-time" as NSString
+        item.value = 0 as NSNumber
+        item.dataType = kCMMetadataBaseDataType_SInt8 as String
+        
+        let group = AVTimedMetadataGroup(
+            items: [item],
+            timeRange: CMTimeRange(start: time, duration: CMTime(value: 1, timescale: 600))
+        )
+        
+        adaptor.append(group)
     }
     
     func stop() {
@@ -201,6 +263,7 @@ class ScreenRecorder {
         displayLink = nil
         
         videoInput.markAsFinished()
+        metadataInput?.markAsFinished()
         
         assetWriter.finishWriting { [weak self] in
             guard let self = self else { return }

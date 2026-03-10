@@ -478,14 +478,19 @@ struct PortfolioDetailView: View {
         let item = items[currentIndex]
         
         if items.count == 1 {
-            // 最后一个，删除后直接关闭
-            portfolioStore.deleteItem(item)
+            // 最后一个，先关闭详情页再删除
             dismiss()
+            // 延迟删除，确保 dismiss 动画完成后再移除数据
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                portfolioStore.deleteItem(item)
+            }
         } else {
-            // 如果删除的是最后一个位置，先调整索引
+            // 先计算删除后应该显示的索引
             let newIndex = currentIndex >= items.count - 1 ? items.count - 2 : currentIndex
-            portfolioStore.deleteItem(item)
-            currentIndex = min(newIndex, max(0, items.count - 1))
+            withAnimation {
+                portfolioStore.deleteItem(item)
+                currentIndex = min(newIndex, max(0, items.count - 1))
+            }
         }
     }
     

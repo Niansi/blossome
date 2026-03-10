@@ -37,10 +37,17 @@ struct PortfolioView: View {
         }
         .navigationTitle("作品集")
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(item: $selectedItem) { item in
+        .fullScreenCover(item: $selectedItem, onDismiss: {
+            selectedItem = nil
+        }) { item in
             if let index = portfolioStore.items.firstIndex(where: { $0.id == item.id }) {
                 PortfolioDetailView(initialIndex: index)
                     .environmentObject(portfolioStore)
+            } else {
+                // 作品已被删除，自动关闭详情页
+                Color.clear.onAppear {
+                    selectedItem = nil
+                }
             }
         }
     }
