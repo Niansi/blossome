@@ -67,6 +67,9 @@ struct ContentView: View {
     // 防抖保存用的 timer
     @State private var saveTimer: Timer? = nil
     
+    // 用于记录 Art 按钮在全球坐标系中的位置，从而将外环文字贴在上面
+    @State private var artButtonFrame: CGRect = .zero
+    
     var body: some View {
         TextEditor(text: $notepadText)
             .font(.body)
@@ -97,8 +100,23 @@ struct ContentView: View {
                         Label("蒲公英的约定", systemImage: "wind")
                     }
                 } label: {
-                    Text("Art").bold()
+                    Image("ArtIcon")
+                        .resizable()
+                        .renderingMode(.template)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 24, height: 24)
                         .foregroundStyle(.primary)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .onAppear {
+                                        artButtonFrame = geo.frame(in: .global)
+                                    }
+                                    .onChange(of: geo.frame(in: .global)) { _, newFrame in
+                                        artButtonFrame = newFrame
+                                    }
+                            }
+                        )
                 }
             }
         }
@@ -241,6 +259,26 @@ struct ContentView: View {
         .navigationDestination(isPresented: $showingPortfolio) {
             PortfolioView()
                 .environmentObject(portfolioStore)
+        }
+        .overlay {
+            GeometryReader { globalGeo in
+                if artButtonFrame != .zero {
+                    CircularTextEffect(
+                        text: "blossome blossome ",
+                        radius: 35,
+                        font: .custom("SourceCodePro-Light", size: 8),
+                        textColor: .primary,
+                        textOpacity: 0.6
+                    )
+                    .position(
+                        x: artButtonFrame.midX - globalGeo.frame(in: .global).minX,
+                        y: artButtonFrame.midY - globalGeo.frame(in: .global).minY
+                    )
+                    .allowsHitTesting(false)
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
         }
         .overlay(alignment: .top) {
             if showEmptyTextToast {

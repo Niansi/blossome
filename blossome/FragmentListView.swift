@@ -15,28 +15,27 @@ struct FragmentListView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottomTrailing) {
-                List {
-                    ForEach(fragmentStore.fragments) { fragment in
-                        Button {
-                            selectedFragmentID = fragment.id
-                        } label: {
-                            FragmentRowView(fragment: fragment)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
-                    }
-                    .onDelete(perform: deleteItems)
-                }
-                .listStyle(.plain)
-                .overlay {
+                Group {
                     if fragmentStore.fragments.isEmpty {
-                        ContentUnavailableView {
-                            Label("还没有碎片", systemImage: "note.text")
-                        } description: {
-                            Text("点击右下角 + 创建第一条碎片")
+                        EmptyFlowerView(
+                            title: "我没有找到关于你的碎片"
+                        )
+                    } else {
+                        List {
+                            ForEach(fragmentStore.fragments) { fragment in
+                                Button {
+                                    selectedFragmentID = fragment.id
+                                } label: {
+                                    FragmentRowView(fragment: fragment)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                            }
+                            .onDelete(perform: deleteItems)
                         }
+                        .listStyle(.plain)
                     }
                 }
 
@@ -158,7 +157,7 @@ struct SwipeableDeleteModifier: ViewModifier {
                         if value.translation.width < deleteThreshold {
                             // 长滑直接删除
                             withAnimation(.easeOut(duration: 0.2)) {
-                                offset = -UIScreen.main.bounds.width
+                                offset = -3000
                             }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 onDelete()

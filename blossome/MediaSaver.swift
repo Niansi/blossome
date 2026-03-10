@@ -119,7 +119,7 @@ class ScreenRecorder {
                 assetWriter.metadata = [metadataItem]
             }
             
-            let scale = UIScreen.main.scale
+            let scale = webView.traitCollection.displayScale
             let targetSize = canvasRect?.size ?? webView.bounds.size
             let width = Int(targetSize.width * scale) / 2 * 2
             let height = Int(targetSize.height * scale) / 2 * 2
@@ -164,7 +164,7 @@ class ScreenRecorder {
     private func captureFrame(at time: CFTimeInterval) {
         let viewBounds = webView.bounds
         let size = self.captureSize!
-        let scale = UIScreen.main.scale
+        let scale = webView.traitCollection.displayScale
         let presentationTime = CMTime(seconds: time, preferredTimescale: 600)
         
         let targetSize = canvasRect?.size ?? viewBounds.size

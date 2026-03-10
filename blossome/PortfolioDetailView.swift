@@ -371,7 +371,7 @@ struct PortfolioDetailView: View {
             }
         }
         .offset(y: dragOffset.height > 0 ? dragOffset.height : 0)
-        .opacity(1.0 - Double(max(0, dragOffset.height) / max(1, UIScreen.main.bounds.height)))
+        .opacity(1.0 - Double(max(0, dragOffset.height) / max(1, UIApplication.screenBoundsHeight)))
         .simultaneousGesture(
             DragGesture()
                 .onChanged { value in
@@ -379,7 +379,7 @@ struct PortfolioDetailView: View {
                         let isVertical = abs(value.translation.height) > abs(value.translation.width) + 15
                         if isVertical && value.translation.height > 0 {
                             let startY = value.startLocation.y
-                            let screenHeight = UIScreen.main.bounds.height
+                            let screenHeight = UIApplication.screenBoundsHeight
                             // 标题栏和底部信息区域不响应下滑手势
                             if startY > 120 && startY < screenHeight - 150 {
                                 isDraggingDown = true
@@ -506,6 +506,15 @@ private extension Array {
     subscript(safe index: Int) -> Element? {
         guard indices.contains(index) else { return nil }
         return self[index]
+    }
+}
+
+extension UIApplication {
+    static var screenBoundsHeight: CGFloat {
+        if let windowScene = shared.connectedScenes.first(where: { $0 is UIWindowScene }) as? UIWindowScene {
+            return windowScene.screen.bounds.height
+        }
+        return 852 // Fallback
     }
 }
 

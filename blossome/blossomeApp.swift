@@ -14,9 +14,24 @@ struct blossomeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            FragmentListView()
-                .environmentObject(portfolioStore)
-                .environmentObject(fragmentStore)
+            ZStack(alignment: .bottomLeading) {
+                FragmentListView()
+                    .environmentObject(portfolioStore)
+                    .environmentObject(fragmentStore)
+                
+                // 全局水印
+                CircularTextEffect(
+                    text: "blossome blossome blossome ",
+                    radius: 140,
+                    font: .custom("SourceCodePro-Light", size: 24),
+                    textColor: .primary,
+                    textOpacity: 0.12
+                )
+                .allowsHitTesting(false)
+                .padding(.leading, -120)
+                .padding(.bottom, -100)
+                .ignoresSafeArea()
+            }
         }
     }
 }

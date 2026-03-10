@@ -17,18 +17,9 @@ struct PortfolioView: View {
     var body: some View {
         Group {
             if portfolioStore.items.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 50))
-                        .foregroundColor(.secondary)
-                    Text("还没有作品")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                    Text("创建并保存你的第一个作品吧")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyFlowerView(
+                    title: "你还没有留下任何作品"
+                )
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 12) {
