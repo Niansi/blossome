@@ -9,6 +9,7 @@ import WebKit
 import Combine
 import ImageIO
 import AVFoundation
+import ReplayKit
 import UniformTypeIdentifiers
 
 class WebViewManager: ObservableObject {
@@ -21,14 +22,15 @@ class WebViewManager: ObservableObject {
 
 class MediaSaver: NSObject {
     static let shared = MediaSaver()
-    
+
+    private var replayKitRecorder: ReplayKitRecorder?
     private var screenRecorder: ScreenRecorder?
-    
+
     func startRecording(webView: WKWebView, duration: TimeInterval, forLivePhoto: Bool, effectName: String, completion: @escaping (URL?, URL?, Error?) -> Void) {
-        if screenRecorder != nil {
-            screenRecorder?.stop()
-        }
-        
+        // 停止任何已有录制
+        replayKitRecorder?.stop()
+        screenRecorder?.stop()
+
         let js = """
         (function() {
             var canvas = document.querySelector('canvas');
@@ -39,24 +41,81 @@ class MediaSaver: NSObject {
             return null;
         })();
         """
-        
+
         webView.evaluateJavaScript(js) { [weak self] result, error in
-            var canvasRect: CGRect? = nil
+            guard let self else { return }
+
+            // JS getBoundingClientRect() 返回的是 viewport 坐标（CSS 像素 = 逻辑点）
+            // 对 ReplayKit 路径：直接使用 viewport 坐标转换为屏幕像素坐标（不加 adjustedContentInset）
+            // 对 ScreenRecorder 降级路径：加 adjustedContentInset 转换为 WebView scrollView 坐标
+            var viewportRect: CGRect? = nil
             if let dict = result as? [String: Any],
                let x = dict["x"] as? CGFloat,
                let y = dict["y"] as? CGFloat,
                let w = dict["width"] as? CGFloat,
-               let h = dict["height"] as? CGFloat {
-                let inset = webView.scrollView.adjustedContentInset
-                canvasRect = CGRect(x: x + inset.left, y: y + inset.top, width: w, height: h)
+               let h = dict["height"] as? CGFloat,
+               w > 0, h > 0 {
+                viewportRect = CGRect(x: x, y: y, width: w, height: h)
             }
-            
-            self?.screenRecorder = ScreenRecorder()
-            self?.screenRecorder?.start(webView: webView, duration: duration, forLivePhoto: forLivePhoto, canvasRect: canvasRect) { video, image, err in
-                completion(video, image, err)
-                self?.screenRecorder = nil
+
+            // 2. 尝试使用 ReplayKit（GPU 级捕获，主线程零阻塞）
+            if RPScreenRecorder.shared().isAvailable {
+                // viewport 坐标 → 窗口坐标（webView.convert 自动处理 WebView 在屏幕中的偏移）
+                // → 屏幕像素坐标（乘以 screenScale）
+                var canvasRectInScreenPixels: CGRect? = nil
+                if let vpRect = viewportRect {
+                    // viewport 坐标与 WebView 视图坐标一致（WKWebView ignoresSafeArea 情况下）
+                    let windowRect = webView.convert(vpRect, to: nil)
+                    let scale = webView.window?.screen.scale ?? UIScreen.main.scale
+                    canvasRectInScreenPixels = CGRect(
+                        x: windowRect.minX * scale,
+                        y: windowRect.minY * scale,
+                        width: windowRect.width * scale,
+                        height: windowRect.height * scale
+                    )
+                }
+
+                let recorder = ReplayKitRecorder()
+                self.replayKitRecorder = recorder
+                recorder.start(
+                    canvasRectInScreenPixels: canvasRectInScreenPixels,
+                    duration: duration,
+                    forLivePhoto: forLivePhoto
+                ) { video, image, err in
+                    completion(video, image, err)
+                    self.replayKitRecorder = nil
+                }
+            } else {
+                // 3. 降级：使用 ScreenRecorder（drawHierarchy，需要 scrollView 坐标）
+                print("[MediaSaver] RPScreenRecorder 不可用，降级为 ScreenRecorder")
+                var canvasRectInScrollView: CGRect? = nil
+                if let vpRect = viewportRect {
+                    let inset = webView.scrollView.adjustedContentInset
+                    canvasRectInScrollView = CGRect(
+                        x: vpRect.minX + inset.left,
+                        y: vpRect.minY + inset.top,
+                        width: vpRect.width,
+                        height: vpRect.height
+                    )
+                }
+                let recorder = ScreenRecorder()
+                self.screenRecorder = recorder
+                recorder.start(
+                    webView: webView,
+                    duration: duration,
+                    forLivePhoto: forLivePhoto,
+                    canvasRect: canvasRectInScrollView
+                ) { video, image, err in
+                    completion(video, image, err)
+                    self.screenRecorder = nil
+                }
             }
         }
+    }
+
+    func stop() {
+        replayKitRecorder?.stop()
+        screenRecorder?.stop()
     }
 }
 

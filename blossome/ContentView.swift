@@ -172,73 +172,95 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 
                 VStack {
-                    HStack {
-                        Button(action: { activeArtEffect = nil }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .frame(width: 32, height: 32)
+                    // 顶部栏
+                    ZStack {
+                        // 录制中提示（小文字，置于中央）
+                        if isRecording {
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 6, height: 6)
+                                Text("录制中，请勿关闭页面")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .transition(.opacity.animation(.easeInOut(duration: 0.3)))
                         }
-                        .buttonStyle(.glass)
-                        .clipShape(Circle())
-                        
-                        Spacer()
+
+                        HStack {
+                            Button(action: { activeArtEffect = nil }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .buttonStyle(.glass)
+                            .clipShape(Circle())
+                            
+                            Spacer()
+                        }
                     }
                     .padding(.leading, 16)
                     .padding(.top, 6)
                     
                     Spacer()
                     
-                    // 显式添加底部导出按钮组，使用 GlassEffectContainer 产生融合形变
-                    if !isRecording && fluidProgressState == .idle {
-                        GlassEffectContainer {
-                            HStack(spacing: 8) {
-                                Menu {
-                                    Button("5 秒") { startRecordingProcess(duration: 5) }
-                                    Button("15 秒") { startRecordingProcess(duration: 15) }
-                                    Button("30 秒") { startRecordingProcess(duration: 30) }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "video.fill")
-                                        Text("保存为视频")
+                    // 底部：录制按钮 ⇔ FluidProgressHUD（同位置 ZStack，spring 液态玻璃过渡）
+                    ZStack(alignment: .bottom) {
+                        // 录制按钮组（GlassEffectContainer 让两个按钮互相融合）
+                        if !isRecording && fluidProgressState == .idle {
+                            GlassEffectContainer {
+                                HStack(spacing: 8) {
+                                    Menu {
+                                        Button("5 秒") { startRecordingProcess(duration: 5) }
+                                        Button("15 秒") { startRecordingProcess(duration: 15) }
+                                        Button("30 秒") { startRecordingProcess(duration: 30) }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "video.fill")
+                                            Text("保存为视频")
+                                        }
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 14)
                                     }
-                                    .font(.headline)
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                                }
-                                .menuStyle(.button)
-                                .buttonStyle(.glass)
+                                    .menuStyle(.button)
+                                    .buttonStyle(.glass)
 
-                                Button(action: {
-                                    startRecordingProcess(forLivePhoto: true)
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "livephoto")
-                                        Text("LivePhoto")
+                                    Button(action: {
+                                        startRecordingProcess(forLivePhoto: true)
+                                    }) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "livephoto")
+                                            Text("LivePhoto")
+                                        }
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 14)
                                     }
-                                    .font(.headline)
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
+                                    .buttonStyle(.glass)
                                 }
-                                .buttonStyle(.glass)
                             }
+                            .transition(.scale(scale: 0.9).combined(with: .opacity))
                         }
-                        .padding(.bottom, 40)
+
+                        // FluidProgressHUD（录制中或处理结果，独立 glass，不嵌套在 GlassEffectContainer 中）
+                        if isRecording || fluidProgressState != .idle {
+                            FluidProgressHUD(state: $fluidProgressState, onViewPortfolio: {
+                                fluidProgressState = .idle
+                                navigateToPortfolioFromOverlay = true
+                                activeArtEffect = nil
+                            })
+                            .transition(.scale(scale: 0.9).combined(with: .opacity))
+                        }
                     }
+                    .animation(.spring(response: 0.45, dampingFraction: 0.75), value: isRecording)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.75), value: fluidProgressState == .idle)
+                    .padding(.bottom, 40)
                 }
                 
-                if fluidProgressState != .idle {
-                    FluidProgressHUD(state: $fluidProgressState, onViewPortfolio: {
-                        fluidProgressState = .idle
-                        navigateToPortfolioFromOverlay = true
-                        activeArtEffect = nil
-                    })
-                    .transition(.scale.combined(with: .opacity))
-                    .zIndex(2)
-                }
-
                 // Loading 遮罩：等待文本渲染完成
                 if isArtLoading {
                     ZStack {
