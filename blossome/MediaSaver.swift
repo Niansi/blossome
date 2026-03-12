@@ -31,54 +31,56 @@ class MediaSaver: NSObject {
         replayKitRecorder?.stop()
         screenRecorder?.stop()
 
+        // JS 返回 canvas 的 CSS 逻辑点坐标（getBoundingClientRect = viewport 坐标）
         let js = """
         (function() {
             var canvas = document.querySelector('canvas');
-            if (canvas) {
-                var rect = canvas.getBoundingClientRect();
-                return {x: rect.left, y: rect.top, width: rect.width, height: rect.height};
-            }
-            return null;
+            if (!canvas) return null;
+            var rect = canvas.getBoundingClientRect();
+            return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
         })();
         """
 
         webView.evaluateJavaScript(js) { [weak self] result, error in
             guard let self else { return }
 
-            // JS getBoundingClientRect() 返回的是 viewport 坐标（CSS 像素 = 逻辑点）
-            // 对 ReplayKit 路径：直接使用 viewport 坐标转换为屏幕像素坐标（不加 adjustedContentInset）
-            // 对 ScreenRecorder 降级路径：加 adjustedContentInset 转换为 WebView scrollView 坐标
-            var viewportRect: CGRect? = nil
+            // CSS 逻辑点（getBoundingClientRect 的 viewport 坐标）
+            var cssRect: CGRect? = nil
             if let dict = result as? [String: Any],
                let x = dict["x"] as? CGFloat,
                let y = dict["y"] as? CGFloat,
                let w = dict["width"] as? CGFloat,
                let h = dict["height"] as? CGFloat,
                w > 0, h > 0 {
-                viewportRect = CGRect(x: x, y: y, width: w, height: h)
+                cssRect = CGRect(x: x, y: y, width: w, height: h)
             }
 
-            // 2. 尝试使用 ReplayKit（GPU 级捕获，主线程零阻塞）
+            // 屏幕尺寸（逻辑点），用于归一化
+            let screenBounds = webView.window?.screen.bounds ?? UIScreen.main.bounds
+
             if RPScreenRecorder.shared().isAvailable {
-                // viewport 坐标 → 窗口坐标（webView.convert 自动处理 WebView 在屏幕中的偏移）
-                // → 屏幕像素坐标（乘以 screenScale）
-                var canvasRectInScreenPixels: CGRect? = nil
-                if let vpRect = viewportRect {
-                    // viewport 坐标与 WebView 视图坐标一致（WKWebView ignoresSafeArea 情况下）
-                    let windowRect = webView.convert(vpRect, to: nil)
-                    let scale = webView.window?.screen.scale ?? UIScreen.main.scale
-                    canvasRectInScreenPixels = CGRect(
-                        x: windowRect.minX * scale,
-                        y: windowRect.minY * scale,
-                        width: windowRect.width * scale,
-                        height: windowRect.height * scale
+                // ——— ReplayKit 路径 ———
+                // 目标：归一化坐标（0-1），在 ReplayKitRecorder 里再乘以实际帧尺寸
+                // y 方向：CSS viewport y=0 对应 UIKit y = adjustedContentInset.top
+                //        所以 UIKit y = cssY + inset.top
+                var canvasNormalized: CGRect? = nil
+                if let css = cssRect {
+                    let inset = webView.scrollView.adjustedContentInset
+                    let uiX = css.minX + inset.left  // 通常 inset.left = 0
+                    let uiY = css.minY + inset.top   // 补偿 safe area inset
+                    canvasNormalized = CGRect(
+                        x: uiX / screenBounds.width,
+                        y: uiY / screenBounds.height,
+                        width: css.width / screenBounds.width,
+                        height: css.height / screenBounds.height
                     )
                 }
+                print("[MediaSaver] canvasNormalized = \(String(describing: canvasNormalized))")
 
                 let recorder = ReplayKitRecorder()
                 self.replayKitRecorder = recorder
                 recorder.start(
-                    canvasRectInScreenPixels: canvasRectInScreenPixels,
+                    canvasRectNormalized: canvasNormalized,
                     duration: duration,
                     forLivePhoto: forLivePhoto
                 ) { video, image, err in
@@ -86,16 +88,16 @@ class MediaSaver: NSObject {
                     self.replayKitRecorder = nil
                 }
             } else {
-                // 3. 降级：使用 ScreenRecorder（drawHierarchy，需要 scrollView 坐标）
+                // ——— ScreenRecorder 降级路径（drawHierarchy，需要 WebView scrollView 坐标）———
                 print("[MediaSaver] RPScreenRecorder 不可用，降级为 ScreenRecorder")
                 var canvasRectInScrollView: CGRect? = nil
-                if let vpRect = viewportRect {
+                if let css = cssRect {
                     let inset = webView.scrollView.adjustedContentInset
                     canvasRectInScrollView = CGRect(
-                        x: vpRect.minX + inset.left,
-                        y: vpRect.minY + inset.top,
-                        width: vpRect.width,
-                        height: vpRect.height
+                        x: css.minX + inset.left,
+                        y: css.minY + inset.top,
+                        width: css.width,
+                        height: css.height
                     )
                 }
                 let recorder = ScreenRecorder()
