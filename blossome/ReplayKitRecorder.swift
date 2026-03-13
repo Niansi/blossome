@@ -264,11 +264,11 @@ class ReplayKitRecorder: NSObject {
         var processed = ciImage
 
         if let norm = canvasRectNormalized {
-            // 归一化坐标 × 实际帧尺寸 → 像素级 UIKit 裁剪区域（y 从顶部）
-            let pxX   = norm.minX * bw
-            let pxY   = norm.minY * bh         // UIKit: y 从屏幕顶部
-            let pxW   = norm.width * bw
-            let pxH   = norm.height * bh
+            // 归一化坐标 × 实际帧尺寸 → 像素级 UIKit 裁剪区域，round 取整避免亚像素偏差
+            let pxX = round(norm.minX * bw)
+            let pxY = round(norm.minY * bh)
+            let pxW = round(norm.width * bw)
+            let pxH = round(norm.height * bh)
 
             // CIImage 坐标 Y 轴朝上（左下角原点）→ 翻转 Y
             let ciY = bh - (pxY + pxH)
@@ -279,7 +279,7 @@ class ReplayKitRecorder: NSObject {
         // 平移到 CIImage 原点，再等比缩放到 outputSize
         let scaleX = outputSize.width / processed.extent.width
         let scaleY = outputSize.height / processed.extent.height
-        if abs(scaleX - 1.0) > 0.001 || abs(scaleY - 1.0) > 0.001 {
+        if abs(scaleX - 1.0) > 0.0001 || abs(scaleY - 1.0) > 0.0001 {
             let translated = processed.transformed(by: CGAffineTransform(
                 translationX: -processed.extent.minX, y: -processed.extent.minY
             ))
