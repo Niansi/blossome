@@ -48,7 +48,6 @@
         const SETTLE_DURATION = 50;
         const DISPLAY_DURATION = 120;
         const FALL_DURATION = 50;
-        const MAX_WORDS = 5;
 
         // --- State ---
         let state = 'IDLE';
@@ -90,6 +89,10 @@
                 this.angle = (Math.random() - 0.5) * 0.6;
                 this.alpha = 0;
                 this.scale = 0.5;
+                
+                // Final resting offsets
+                this.finalRestingXOffset = (Math.random() - 0.5) * 60; // -30 to +30
+                this.finalRestingAngle = (Math.random() - 0.5) * (Math.PI / 6); // -15 to +15 degrees
 
                 // Physics for flying phase
                 this.vx = 0;
@@ -101,47 +104,74 @@
             launch() {
                 this.launched = true;
                 this.alpha = 255;
-                // Arc upward from box toward general target direction
-                let dx = this.targetX - this.x;
-                this.vx = dx * 0.03 + (Math.random() - 0.5) * 3;
-                this.vy = -10 - Math.random() * 5;
-                this.angle = (Math.random() - 0.5) * 0.8;
-                this.scale = 0.6 + Math.random() * 0.3;
+                
+                this.flightTime = 40 + Math.random() * 20; // 40 to 60 frames
+                this.flightTimer = 0;
+                
+                this.startX = this.x;
+                this.startY = this.y;
+                
+                this.endX = this.targetX + this.finalRestingXOffset;
+                this.endY = this.targetY;
+                
+                // 向外且向上的随机控制点，形成喷泉抛物线效果
+                let sideDir = (this.endX > boxX) ? 1 : -1; 
+                // 增强发散效果
+                let outwardX = (width * 0.15 + Math.random() * width * 0.2) * sideDir; 
+                
+                this.cpX = this.startX + outwardX;
+                let minY = Math.min(this.startY, this.endY);
+                this.cpY = minY - height * (0.2 + Math.random() * 0.25);
+                
+                // 旋转圈数：随机方向，至少多转一圈
+                this.startAngle = (Math.random() - 0.5) * Math.PI;
+                let rotations = (Math.random() > 0.5 ? 1 : -1) * Math.PI * 2;
+                this.targetAngle = this.finalRestingAngle + rotations;
+                
+                this.startScale = 0.5 + Math.random() * 0.2;
             }
 
             updateFlying() {
-                if (!this.launched) return;
-                this.vy += 0.25; // gravity
-                this.x += this.vx;
-                this.y += this.vy;
-                this.angle *= 0.97;
-                this.vx *= 0.98;
-            }
-
-            updateSettling() {
-                if (!this.launched) return;
-                // Ease toward target
-                this.x += (this.targetX - this.x) * 0.12;
-                this.y += (this.targetY - this.y) * 0.12;
-                this.angle += (0 - this.angle) * 0.15;
-                this.scale += (1.0 - this.scale) * 0.1;
-                this.vx = 0;
-                this.vy = 0;
-
-                let dx = this.targetX - this.x;
-                let dy = this.targetY - this.y;
-                if (dx * dx + dy * dy < 2) {
-                    this.x = this.targetX;
-                    this.y = this.targetY;
+                if (!this.launched || this.settled) return;
+                
+                this.flightTimer++;
+                let t = this.flightTimer / this.flightTime;
+                
+                if (t >= 1.0) {
+                    this.x = this.endX;
+                    this.y = this.endY;
+                    this.angle = this.targetAngle;
+                    this.scale = 1.0;
                     this.settled = true;
+                } else {
+                    // Cubic ease out 计算，提供完美的抛物线着陆感
+                    let easeT = 1 - Math.pow(1 - t, 3);
+                    let invT = 1 - easeT;
+                    
+                    // Bezier formula for curve
+                    this.x = invT * invT * this.startX + 2 * invT * easeT * this.cpX + easeT * easeT * this.endX;
+                    this.y = invT * invT * this.startY + 2 * invT * easeT * this.cpY + easeT * easeT * this.endY;
+                    
+                    this.angle = this.startAngle + (this.targetAngle - this.startAngle) * easeT;
+                    this.scale = this.startScale + (1.0 - this.startScale) * easeT;
                 }
             }
 
+            updateSettling() {
+                if (!this.launched || this.settled) return;
+                // 如果还未落地就进入了 settling 阶段，强制将其吸附在最终点
+                this.x = this.endX;
+                this.y = this.endY;
+                this.angle = this.targetAngle;
+                this.scale = 1.0;
+                this.settled = true;
+            }
+
             updateDisplay() {
-                // Tiny vibration
-                this.x = this.targetX + (Math.random() - 0.5) * 0.4;
-                this.y = this.targetY + (Math.random() - 0.5) * 0.4;
-                this.angle = 0;
+                // 原地轻微晃动
+                this.x = this.endX + (Math.random() - 0.5) * 0.4;
+                this.y = this.endY + (Math.random() - 0.5) * 0.4;
+                this.angle = this.targetAngle; // maintains rotation
                 this.scale = 1.0;
             }
 
@@ -483,8 +513,11 @@
             let words = text.split(/[\s\n]+/).filter(w => w.trim().length > 0);
             if (words.length === 0) words = ['麦门'];
             let groups = [];
-            for (let i = 0; i < words.length; i += MAX_WORDS) {
-                groups.push(words.slice(i, i + MAX_WORDS));
+            let i = 0;
+            while (i < words.length) {
+                let count = Math.floor(Math.random() * 3) + 3; // 3, 4, or 5
+                groups.push(words.slice(i, i + count));
+                i += count;
             }
             return groups;
         }
@@ -538,26 +571,29 @@
 
                 case 'FLYING':
                     shakeIntensity = Math.max(0, 2.5 - stateTimer * 0.08);
+                    let allSettled = true;
                     // Stagger launches
                     for (let wp of wordParticles) {
                         if (!wp.launched && stateTimer >= wp.delay) {
                             wp.launch();
                         }
                         wp.updateFlying();
+                        if (!wp.settled) allSettled = false;
                     }
-                    if (stateTimer >= FLY_DURATION) {
+                    if (allSettled && stateTimer > 10) {
+                        transitionTo('SETTLING');
+                    } else if (stateTimer >= 150) { // Timeout fallback
                         transitionTo('SETTLING');
                     }
                     break;
 
                 case 'SETTLING':
                     shakeIntensity = 0;
-                    let allSettled = true;
+                    // 仅作短暂等待供最后一丝动画缓动
                     for (let wp of wordParticles) {
                         wp.updateSettling();
-                        if (!wp.settled) allSettled = false;
                     }
-                    if (allSettled || stateTimer >= SETTLE_DURATION) {
+                    if (stateTimer >= 10) {
                         transitionTo('DISPLAY');
                     }
                     break;

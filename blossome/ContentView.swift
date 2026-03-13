@@ -34,6 +34,19 @@ enum ArtEffect: String, Identifiable {
         case .dandelion: return "蒲公英的约定"
         }
     }
+
+    func preprocess(_ text: String) -> String {
+        switch self {
+        case .sketch:
+            return TextProcessor.smartWrap(text, maxChars: 30)
+        case .mcdonald:
+            return TextProcessor.tokenize(text)
+        case .rainynight:
+            return TextProcessor.normalizeWhitespace(text)
+        case .dandelion:
+            return text
+        }
+    }
 }
 
 struct ContentView: View {
@@ -344,12 +357,12 @@ struct ContentView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         isNotepadFocused = false
 
-        // 2) 同步捕获当前文本快照，保证 WebView 创建时即拿到正确内容
-        previewText = notepadText
+        // 2) 同步捕获当前文本快照，并应用 Art 预处理器
+        previewText = effect.preprocess(notepadText)
 
         // 3) 下一帧再刷新一次（确保 IME 组合文本已提交），然后做空文本保护并打开 cover
         DispatchQueue.main.async {
-            self.previewText = self.notepadText
+            self.previewText = effect.preprocess(self.notepadText)
             let trimmed = self.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 self.showToast(message: "请输入文字后再预览")
